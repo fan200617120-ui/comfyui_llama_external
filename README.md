@@ -1,6 +1,7 @@
 ComfyUI LLM External 插件使用手册（Word版）
 
 一、简介
+![Workflow Example](https://raw.githubusercontent.com/fan200617120-ui/comfyui_llama_external/main/workflow_examples/llama_image_to_prompt_basic.png)
 
 本插件将 llama.cpp 和 Ollama 的本地大模型能力集成到 ComfyUI 中，支持：
 
