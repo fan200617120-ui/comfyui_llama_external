@@ -1,0 +1,22 @@
+llama_image_to_prompt_basic.json — 基础图像反推工作流
+
+功能：加载图片 → 启动 llama.cpp 服务 → 反推提示词 → 显示文本
+
+
+
+llama_text_to_prompt_basic.json — 纯文本创意扩展工作流
+
+功能：输入简短描述 → 启动服务 → LLM 扩展详细提示词 → 显示文本
+
+
+
+ollama_image_to_prompt_basic.json — Ollama 图像反推工作流
+
+功能：使用 Ollama 服务进行图像反推（需预先启动 Ollama）
+
+
+full_pipeline_image_to_image.json — 完整图像生成流水线
+
+功能：加载参考图 → 反推提示词 → 使用 SD 生成相似风格图像
+
+    此工作流依赖基础的 SD 节点（CheckpointLoaderSimple、CLIPTextEncode、KSampler、VAEDecode），你需要根据自己安装的模型调整 ckpt_name

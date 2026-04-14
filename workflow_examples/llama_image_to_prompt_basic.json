@@ -1,0 +1,103 @@
+{
+  "last_node_id": 5,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [50, 100],
+      "size": [315, 314],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "links": [1], "slot_index": 0},
+        {"name": "MASK", "type": "MASK", "links": null}
+      ],
+      "properties": {"Node name for S&R": "LoadImage"},
+      "widgets_values": ["example.jpg", "image"]
+    },
+    {
+      "id": 2,
+      "type": "LLMExternalServerAuto",
+      "pos": [50, 480],
+      "size": [420, 280],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "outputs": [
+        {"name": "api_url", "type": "STRING", "links": [2], "slot_index": 0},
+        {"name": "model_name", "type": "STRING", "links": [3], "slot_index": 1},
+        {"name": "timeout", "type": "INT", "links": [4], "slot_index": 2},
+        {"name": "max_tokens", "type": "INT", "links": [5], "slot_index": 3}
+      ],
+      "properties": {"Node name for S&R": "LLMExternalServerAuto"},
+      "widgets_values": [
+        "F:\\AItools\\LLM\\models\\qwen3.5_Unsloth",
+        8080,
+        -1,
+        4096,
+        180,
+        4096,
+        false,
+        "F:\\AItools\\LLM\\llama\\llama-server.exe"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "LLMExternalImageToPrompt",
+      "pos": [550, 250],
+      "size": [500, 320],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"name": "api_url", "type": "STRING", "link": 2},
+        {"name": "model_name", "type": "STRING", "link": 3},
+        {"name": "image", "type": "IMAGE", "link": 1},
+        {"name": "timeout", "type": "INT", "link": 4},
+        {"name": "max_tokens", "type": "INT", "link": 5}
+      ],
+      "outputs": [
+        {"name": "STRING", "type": "STRING", "links": [6], "slot_index": 0}
+      ],
+      "properties": {"Node name for S&R": "LLMExternalImageToPrompt"},
+      "widgets_values": [
+        "http://127.0.0.1:8080/v1",
+        "",
+        "请详细描述这张图片，并生成用于AI绘画的高质量中文提示词。",
+        0.6,
+        180,
+        4096,
+        -1
+      ]
+    },
+    {
+      "id": 4,
+      "type": "ShowText|pysssss",
+      "pos": [1100, 300],
+      "size": [400, 200],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {"name": "text", "type": "STRING", "link": 6}
+      ],
+      "outputs": [],
+      "properties": {"Node name for S&R": "ShowText|pysssss"},
+      "widgets_values": [""]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 3, 2, "IMAGE"],
+    [2, 2, 0, 3, 0, "STRING"],
+    [3, 2, 1, 3, 1, "STRING"],
+    [4, 2, 2, 3, 3, "INT"],
+    [5, 2, 3, 3, 4, "INT"],
+    [6, 3, 0, 4, 0, "STRING"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
