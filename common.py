@@ -6,12 +6,23 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import atexit
+import sys
+import os
+import json
 
-# ------------------- 全局 Session 管理（连接池复用） -------------------
+# === 强制设置 Windows 控制台为 UTF-8（无感修复） ===
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except:
+        pass
+
+# ------------------- 全局 Session 管理 -------------------
 _session_cache = {}
 
 def get_session(base_url, timeout=30):
-    """获取或创建一个带重试机制的 Session，复用 TCP 连接"""
     if base_url not in _session_cache:
         session = requests.Session()
         retry = Retry(
@@ -27,7 +38,6 @@ def get_session(base_url, timeout=30):
     return _session_cache[base_url]
 
 def clear_sessions():
-    """清理所有持久化 Session，释放连接资源"""
     for url, session in _session_cache.items():
         try:
             session.close()
@@ -35,7 +45,6 @@ def clear_sessions():
             pass
     _session_cache.clear()
 
-# 注册退出时自动清理
 atexit.register(clear_sessions)
 
 # ------------------- 友好错误消息映射 -------------------
@@ -48,7 +57,6 @@ FRIENDLY_ERRORS = {
 }
 
 def friendly_error(original_exception, context=""):
-    """将技术异常转换为用户友好的提示"""
     e = original_exception
     if isinstance(e, requests.exceptions.ConnectionError):
         return FRIENDLY_ERRORS["ConnectionError"]
@@ -63,9 +71,6 @@ def friendly_error(original_exception, context=""):
 
 # ------------------- 图像编码 -------------------
 def encode_image(image_tensor, format="PNG"):
-    """
-    将 ComfyUI 的 IMAGE 张量转换为 base64 字符串（无 data: 前缀）。
-    """
     i = 255. * image_tensor[0].cpu().numpy()
     img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
     if format.upper() == "JPEG" and img.mode == "RGBA":
@@ -76,7 +81,6 @@ def encode_image(image_tensor, format="PNG"):
 
 # ------------------- 响应提取 -------------------
 def extract_response(message):
-    """从 OpenAI 兼容响应中提取文本，返回 (文本, 警告)"""
     content = message.get("content", "").strip()
     reasoning = message.get("reasoning_content", "").strip()
     if content:
@@ -104,13 +108,10 @@ def get_actual_model_name(port):
         pass
     return None
 
-# ------------------- 流式请求辅助（生成器） -------------------
+# ------------------- 流式请求辅助 -------------------
 def stream_chat_completion(api_url, payload, timeout):
-    """
-    发送流式请求，逐块 yield delta 内容。
-    使用全局 Session 复用连接。
-    """
     session = get_session(api_url)
+
     with session.post(
         f"{api_url}/chat/completions",
         json=payload,
@@ -118,18 +119,29 @@ def stream_chat_completion(api_url, payload, timeout):
         stream=True
     ) as resp:
         resp.raise_for_status()
-        for line in resp.iter_lines(decode_unicode=True):
-            if line and line.startswith("data: "):
+
+        for line in resp.iter_lines(decode_unicode=False):
+            if not line:
+                continue
+
+            try:
+                line = line.decode("utf-8")
+            except:
+                continue
+
+            if line.startswith("data: "):
                 data = line[6:]
+
                 if data == "[DONE]":
                     break
+
                 try:
-                    import json
                     chunk = json.loads(data)
                     delta = chunk["choices"][0].get("delta", {})
-                    # 修正：使用 .get() 安全取值，避免 KeyError
                     content = delta.get("content")
+
                     if content:
                         yield content
+
                 except:
                     continue
