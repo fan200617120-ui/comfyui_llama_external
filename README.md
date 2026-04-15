@@ -1,21 +1,56 @@
-ComfyUI LLM External 插件
+🌟 LLM_External ComfyUI 插件使用手册
+将强大的本地大语言模型（LLM）无缝接入 ComfyUI 工作流。支持 Ollama 和 llama.cpp 后端，提供文本对话、图像反推提示词、Agent 任务规划，以及节点内实时流式打字效果。
 
 一、简介
 ![Workflow Example](https://raw.githubusercontent.com/fan200617120-ui/comfyui_llama_external/main/workflow_examples/llama_image_to_prompt_basic.png)
 
-本插件将 llama.cpp 和 Ollama 的本地大模型能力集成到 ComfyUI 中，支持：
+📑 目录
+1. 功能亮点
 
-- 🔄 自动/手动启动 llama-server，无需离开 ComfyUI 界面
+2. 环境与安装
 
-- 🖼️ 图像反推提示词（Image-to-Prompt），支持多模态视觉模型
+3. 节点详解
+        
 
-- 💬 纯文本对话生成提示词，用于 AI 绘画前的创意构思
+  1. 服务管理与启动
 
--  支持思考过程提取（如 DeepSeek-R1 等推理模型）
+  2. 文本对话与生成
 
-- ⚡ 请求级 GPU 层数控制，灵活调配显存资源
+  3. 图像理解与反推
+
+  4. 智能体任务规划
+
+4. 经典工作流搭建指南
+
+5. 常见问题排查 (FAQ)
+
+✨ 功能亮点
+
+- 双后端支持：原生兼容 Ollama 和 llama.cpp (llama-server.exe)。
+
+- 自动寻址与复用：自动检测端口模型，避免重复加载浪费显存。
+
+- 多模态视觉：支持 LLaVA、Qwen2-VL 等视觉模型进行图生文。
+
+- Agent 规划：将自然语言需求自动拆解为结构化 JSON 工作流。
+
+- 🔥 UI 流式输出：独占的黑科技，文本在节点框内一边生成一边刷新（类似 ChatGPT 打字效果），告别枯燥等待。
 
 二、安装教程
+将整个 LLM_External 文件夹放入 ComfyUI 的 custom_nodes 目录下：
+
+ComfyUI/
+└── custom_nodes/
+    └── LLM_External/
+        ├── __init__.py
+        ├── common.py
+        ├── server_manager.py
+        ├── llama_nodes.py
+        ├── ollama_nodes.py
+        ├── agent_node.py
+        ├── stream_ui_node.py
+        └── web/
+            └── llm_stream.js
 
 2.1 前置条件
 
@@ -57,6 +92,7 @@ ComfyUI_windows_portable\ComfyUI\custom_nodes\
 
 对于便携版 ComfyUI，请使用其自带的 python_embeded 目录下的 Python 解释器。
 
+
 三、快速上手工作流
 
 以下是一个典型的图像反推提示词工作流：
@@ -71,277 +107,155 @@ ComfyUI_windows_portable\ComfyUI\custom_nodes\
 
 示例工作流：workflow_examples/example_basic.png（插件目录下的 workflow_examples 文件夹提供了可直接拖入 ComfyUI 的 JSON 工作流示例。）
 
-四、节点详细说明
+四、🧩 节点详解
+一、 服务管理与启动
 
-4.1 服务启动节点
+用于在 ComfyUI 内部一键启动或管理本地 LLM 推理服务。
 
-① 自动加载外部LLM（模型文件夹）
+1. 自动加载外部LLM（模型文件夹） (LLMExternalServerAuto)
 
-节点名：LLMExternalServerAuto
+功能：传入一个包含 .gguf 模型的文件夹路径，自动识别模型和 mmproj（多模态投影层），并启动服务。
 
-自动扫描指定文件夹内的 .gguf 模型文件，并启动 llama-server。
+必填参数：
 
-参数
+- model_folder：模型所在的文件夹路径。
 
-说明
+- port：推理端口（默认 8080）。
 
-model_folder
+- gpu_layers：GPU 加速层数（-1 为自动全显存）。
 
-包含 .gguf 文件的文件夹路径
+可选参数：
 
-port
+- exe_path：llama-server.exe 的绝对路径（需根据你的实际安装位置修改）。
 
-服务端口，默认 8080
+- force_reload：强制重启（更换模型时必勾）。
 
-gpu_layers
+2. 手动加载外部LLM (LLMExternalServer)
 
-GPU 加速层数，-1 为自动全显存
+功能：通过精准的文件路径启动服务，适合高级玩家。
 
-ctx_size
+区别：需要手动指定 model_path 和 mmproj_path 的完整文件名。
 
-上下文长度，默认 4096
+3. 卸载/杀死外部LLM (LLMExternalKiller)
 
-timeout
+功能：释放显存。可杀死指定端口的进程，也可勾选 kill_all 一键清空所有由本插件启动的进程。
 
-后续请求的超时时间（秒）
+4. Ollama 连接检查 (OllamaServer)
 
-max_tokens
+功能：检查 Ollama 是否运行，验证指定的模型是否已下载。
 
-生成的最大 token 数
+注意：api_url 填写原始地址（如 http://127.0.0.1:11434），节点会自动补全 /v1。
 
-force_reload
+联动技巧：以上 4 个节点的输出均为 (api_url, model_name, timeout, max_tokens)。直接将这四个输出口连到下游对话节点对应的输入口，无需重复填写地址和模型名！
 
-若已存在同端口服务，是否强制重启
+二、 文本对话与生成
 
-exe_path
+接收文本提示词，输出 LLM 生成的结果。
 
-可选，指定 llama-server.exe 的完整路径
+1. 本地LLM写提示词 (LLMExternalTextChat / OllamaTextChat)
+
+功能：纯文本对话。适合让 LLM 扮演“提示词工程师”编写 Midjourney/SD 提示词。
+
+参数：system_prompt（设定角色）、user_prompt（具体需求）、temperature（创意度，0.1-2.0）。
+
+输出：(STRING) 生成的文本。
+
+2. 🔥 LLM 流式输出(UI版) (LLMStreamUI) 【明星节点】
+
+功能：在节点内部提供一个 200px 高的文本框，实时显示 LLM 生成的每一个字。
+
+适用场景：长文生成、写代码、写诗，需要实时观察模型输出以防跑偏时使用。
+
+注意：虽然界面上看起来是在“节点内显示”，但它依然有一个 final_text 输出口，可以继续连给下游节点（如保存为 txt）。
+
+三、 图像理解与反推
+
+输入 ComfyUI 的图像张量（IMAGE），输出对图像的描述或可用于重绘的提示词。
+
+本地图像反推提示词 (LLMExternalImageToPrompt / OllamaImageToPrompt)
+
+功能：图生文。喂给它一张图，它还你一段高质量的 Prompt。
+
+必填：image（接入任意图像节点）、prompt（对图像的指令，如“请用中文详细描述并提取提示词”）。
+
+模型要求：必须使用多模态模型（如 Ollama 的 llava，或 llama.cpp 加载了 mmproj 的模型）。
+
+四、 智能体任务规划
+
+LLM任务规划器 (LLMAgentPlanner)
+
+功能：输入一句模糊的需求（如“帮我做个赛博朋克风格的小猫视频”），LLM 会输出结构化的 JSON 数组，拆解为具体步骤。
 
 输出：
 
-- api_url：服务的 API 地址（如 http://127.0.0.1:8080/v1）
+- plan_json：纯 JSON 字符串，可供后续代码节点解析执行。
 
-- model_name：实际加载的模型名称（从服务端获取）
+- plan_text：原始文本备份。
 
-- timeout / max_tokens：传递给后续节点的参数
+🚀 经典工作流搭建指南
 
-② 手动加载外部LLM
+场景 A：最简 Ollama 文本生成 (0 配置)
 
-节点名：LLMExternalServer
+1. 添加 Ollama 连接检查，填入默认地址和模型名（如 llama3）。
 
-手动指定模型文件的完整路径，其他参数同上。
+2. 添加 本地LLM写提示词，将上一个节点的 4 个输出口直接连线到这个节点的对应输入口。
 
-参数
+3. 在 user_prompt 输入你的需求，运行。
 
-说明
+场景 B：本地离线图生提示词 (Llama.cpp)
 
-model_path
+1. 添加 自动加载外部LLM，填入 Qwen2-VL 或 LLaVA 的模型文件夹路径，修改 exe_path。
 
-.gguf 模型文件完整路径
+2. 添加 本地图像反推提示词，连好服务节点，接入一张图片，运行。
 
-mmproj_path
+3. 将输出的 STRING 连入 CLIP Text Encode，直接用于生图。
 
-多模态投影文件路径（仅 Llava 等旧架构需要，Qwen2-VL 等留空）
+场景 C：体验 UI 流式打字效果
 
-③ Ollama 连接检查
+1. 添加 Ollama 连接检查。
 
-节点名：OllamaServer
+2. 添加 LLM 流式输出(UI版)。
 
-验证 Ollama 服务是否可用，并传递连接信息。
+3. 连线。输入一个需要长篇大论的问题（如“写一篇800字的科幻小说开头”）。
 
-参数
+4. 点击运行，盯着节点框看效果。
 
-说明
+🔧 常见问题排查 (FAQ)
 
-api_url
+Q1: 报错 找不到 llama-server 可执行文件
 
-Ollama 地址，可省略 /v1，插件会自动补全
+A: 打开 自动加载外部LLM 节点，将 exe_path 修改为你电脑上 llama-server.exe 的真实绝对路径。
 
-model_name
+Q2: 报错 端口 8080 已被模型 'xxx' 占用，与期望的 'yyy' 不一致
 
-要使用的模型名称（如 llava:13b）
+A: 你正在尝试加载一个新模型，但 8080 端口还在跑旧模型。解决方法：勾选 force_reload 强制重启，或者先连一个 卸载/杀死外部LLM 节点清空端口，也可以换一个端口（如 8081）。
 
-timeout / max_tokens
+Q3: 流式输出节点控制台出现乱码（如 è¿™æ˜¯），且每个字重复两遍
 
-请求超时和生成长度限制
+A: 你使用的是旧版本代码。请更新至最新版 common.py，新版已彻底修复 UTF-8 解码错位与双重打印问题。
 
-4.2 推理节点
+Q4: 使用了 LLM 流式输出(UI版)，但节点框里没有实时打字效果？
 
-④ 本地图像反推提示词 (llama.cpp)
+A: 请按顺序检查：
 
-节点名：LLMExternalImageToPrompt
+1. 确认 __init__.py 中包含 WEB_DIRECTORY = "./web"。
 
-将图像发送给多模态模型，生成描述性的提示词。
+2. 确认 web/llm_stream.js 文件存在且路径正确。
 
-输入
+3. 清除浏览器缓存（Ctrl+Shift+Delete），或使用无痕模式打开 ComfyUI。
 
-说明
+4. 按 F12 打开控制台，查看是否有 JS 加载报错。
 
-api_url
+Q5: Ollama 报错 模型 'xxx' 未找到
 
-来自服务启动节点的输出
+A: 请先打开系统终端/命令行，运行 ollama pull xxx 下载模型后重试。
 
-model_name
+Q6: 图像反推节点输出的全是废话，没有提示词？
 
-来自服务启动节点的输出
+A: 这是 Prompt（指令）写得太模糊。建议将节点里的 prompt 修改为更具体的指令，例如：
 
-image
+"你是一个专业的 Stable Diffusion 提示词工程师。请仔细观察这张图片，提取其中的主体、环境、光影、画风，并输出一段英文提示词，格式为：主体描述, 环境背景, 光影效果, 艺术风格, 画质词。只输出提示词，不要解释。"
 
-ComfyUI 的 IMAGE 类型输入
+*Made with ❤️ for ComfyUI Community*
 
-prompt
-
-自定义指令，默认为生成中文提示词
-
-temperature
-
-温度参数，控制随机性
-
-timeout / max_tokens
-
-可使用服务节点的值或手动覆盖
-
-gpu_layers（可选）
-
-请求级 GPU 层数，-1 表示使用服务端默认值
-
-输出：
-
-- STRING：模型生成的提示词文本
-
-⑤ 本地LLM写提示词 (llama.cpp)
-
-节点名：LLMExternalTextChat
-
-纯文本对话，用于根据简短描述扩展详细提示词。
-
-输入
-
-说明
-
-system_prompt
-
-系统角色设定，如“你是一个专业的AI绘画提示词工程师”
-
-user_prompt
-
-用户输入，如“赛博朋克风格的小猫”
-
-其他参数同上
-
-
-
-⑥ 本地图像反推提示词 (Ollama) / 本地LLM写提示词 (Ollama)
-
-节点名：OllamaImageToPrompt / OllamaTextChat
-
-功能与 llama.cpp 版本完全一致，后端使用 Ollama 服务。
-
-4.3 管理节点
-
-⑦ 卸载/杀死外部LLM
-
-节点名：LLMExternalKiller
-
-用于手动终止后台的 llama-server 进程。
-
-参数
-
-说明
-
-api_url
-
-要终止的服务地址
-
-kill_all
-
-是否终止所有由本插件启动的服务
-
-五、工作流示例详解
-
-5.1 示例一：基础图像反推
-
-1. 添加 Load Image 节点，选择一张图片。
-
-2. 添加 自动加载外部LLM（模型文件夹）节点，配置模型文件夹路径（如 F:\models\qwen2-vl-7b）。
-
-3. 添加 本地图像反推提示词 (llama.cpp) 节点，将 api_url 和 model_name 从前一步连接过来，image 连接 Load Image 的输出。
-
-4. 添加 CLIP Text Encode (Prompt) 节点，将反推节点输出的字符串作为正向提示词。
-
-5. 连接后续的采样、解码节点，即可生成与输入图片风格相似的图像。
-
-5.2 示例二：纯文本创意扩展
-
-1. 添加 手动加载外部LLM 节点，指定一个擅长创意写作的文本模型（如 qwen2.5-7b-instruct）。
-
-2. 添加 本地LLM写提示词 (llama.cpp) 节点，填写系统提示词和用户输入。
-
-3. 将输出的提示词文本送入 KSampler 流程。
-
-5.3 示例三：Ollama 快速体验
-
-1. 确保 Ollama 已运行且已拉取 llava:13b。
-
-2. 添加 Ollama 连接检查 节点，model_name 填 llava:13b。
-
-3. 添加 本地图像反推提示词 (Ollama) 节点，连接上一步的输出和图像。
-
-4. 后续流程同上。
-
-六、常见问题
-
-6.1 启动节点报错 “找不到执行文件”
-
-- 请检查 exe_path 是否填写正确，确保指向 llama-server.exe。
-
-- 如果使用自动加载节点，请确保模型文件夹中存在 .gguf 文件。
-
-6.2 提示 “端口已被占用” 或 “模型不一致”
-
-- 同一个端口只能运行一个模型。若需更换模型，请先使用 卸载/杀死外部LLM 节点终止旧服务，或勾选 force_reload。
-
-6.3 图像反推无输出或只有思考过程
-
-- 部分推理模型（如 DeepSeek-R1）会先输出 reasoning_content，若最终答案未生成，请提高 max_tokens 值。
-
-- 确保使用的模型支持视觉输入（多模态模型）。
-
-6.4 Ollama 节点报错 “模型未找到”
-
-- 请在 Ollama 中确认已通过 ollama pull <模型名> 下载对应模型。
-
-- 模型名需与 Ollama 中的完全一致（如 llava:13b 而非 llava）。
-
-6.5 显存不足
-
-- 降低 gpu_layers 值，例如设为 20 仅加载部分层到显存。
-
-- 减小 ctx_size（上下文长度）。
-
-- 使用请求级 GPU 层数控制，在推理节点中将 gpu_layers 设为较小值。
-
-七、目录结构
-
-comfyui_llama_external/
-├── __init__.py              # 节点注册
-├── common.py                # 通用工具函数
-├── llama_nodes.py           # llama.cpp 相关节点
-├── ollama_nodes.py          # Ollama 相关节点
-├── server_manager.py        # 后台进程管理
-├── workflow_examples/       # 工作流示例 JSON 文件
-└── README.md                # 本说明文档
-
-八、更新日志
-
-v1.1 (2026-04-14)
-
-- 新增请求级 GPU 层数控制
-
-- 修复模型名获取逻辑，从服务端读取真实名称
-
-- Ollama URL 自动规范化处理
-
-- 平台兼容性优化
-
-注意：文档中涉及的 http://127.0.0.1:11434（Ollama 默认地址）、http://127.0.0.1:8080/v1（llama-server 默认 API 地址），若出现“URL拼写可能存在错误，请检查”报错，需确认对应服务已正常启动，且端口未被占用。
+注意：文档中涉及的 Ollama 默认地址 http://127.0.0.1:11434，若出现“URL拼写可能存在错误，请检查”报错，需确认 Ollama 服务已正常启动，且该端口未被其他程序占用。
