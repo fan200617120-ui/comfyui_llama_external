@@ -2,41 +2,99 @@ import base64
 from io import BytesIO
 from PIL import Image
 import numpy as np
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import atexit
 
-def encode_image(image_tensor):
-    """将 ComfyUI 的 IMAGE 张量转换为 base64 字符串（无 data: 前缀）"""
+# ------------------- 全局 Session 管理（连接池复用） -------------------
+_session_cache = {}
+
+def get_session(base_url, timeout=30):
+    """获取或创建一个带重试机制的 Session，复用 TCP 连接"""
+    if base_url not in _session_cache:
+        session = requests.Session()
+        retry = Retry(
+            total=2,
+            backoff_factor=1,
+            status_forcelist=[500, 502, 503, 504]
+        )
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=10)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        session.timeout = timeout
+        _session_cache[base_url] = session
+    return _session_cache[base_url]
+
+def clear_sessions():
+    """清理所有持久化 Session，释放连接资源"""
+    for url, session in _session_cache.items():
+        try:
+            session.close()
+        except:
+            pass
+    _session_cache.clear()
+
+# 注册退出时自动清理
+atexit.register(clear_sessions)
+
+# ------------------- 友好错误消息映射 -------------------
+FRIENDLY_ERRORS = {
+    "ConnectionError": "无法连接到服务。可能原因：\n1. llama-server 或 Ollama 没有启动\n2. 端口被防火墙拦截\n3. 地址填写错误",
+    "Timeout": "请求超时。可能原因：\n1. 模型推理太慢（尝试减少上下文长度）\n2. 网络不稳定\n3. 超时设置过短",
+    "model_not_found": "模型名称不存在。可能原因：\n1. 模型未下载（Ollama 需先 pull）\n2. 名称拼写错误\n3. 模型文件路径不正确",
+    "server_crash": "LLM 服务意外退出。请检查模型兼容性或显存是否不足。",
+    "port_conflict": "端口被其他模型占用且模型不匹配。请更换端口或先杀死旧进程。",
+}
+
+def friendly_error(original_exception, context=""):
+    """将技术异常转换为用户友好的提示"""
+    e = original_exception
+    if isinstance(e, requests.exceptions.ConnectionError):
+        return FRIENDLY_ERRORS["ConnectionError"]
+    elif isinstance(e, requests.exceptions.Timeout):
+        return FRIENDLY_ERRORS["Timeout"]
+    elif isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
+        return f"API 端点不存在，请检查地址格式是否正确。当前地址: {context}"
+    elif "model" in str(e).lower() and "not found" in str(e).lower():
+        return FRIENDLY_ERRORS["model_not_found"]
+    else:
+        return f"请求失败: {e}"
+
+# ------------------- 图像编码 -------------------
+def encode_image(image_tensor, format="PNG"):
+    """
+    将 ComfyUI 的 IMAGE 张量转换为 base64 字符串（无 data: 前缀）。
+    """
     i = 255. * image_tensor[0].cpu().numpy()
     img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+    if format.upper() == "JPEG" and img.mode == "RGBA":
+        img = img.convert("RGB")
     buffered = BytesIO()
-    img.save(buffered, format="JPEG")
+    img.save(buffered, format=format.upper())
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
+# ------------------- 响应提取 -------------------
 def extract_response(message):
-    """
-    从 llama.cpp / Ollama 的 OpenAI 兼容响应中提取文本。
-    优先取 content，若为空则取 reasoning_content（推理模型）。
-    返回 (文本, 警告信息)
-    """
+    """从 OpenAI 兼容响应中提取文本，返回 (文本, 警告)"""
     content = message.get("content", "").strip()
     reasoning = message.get("reasoning_content", "").strip()
     if content:
         return content, None
     elif reasoning:
-        return "", f"模型只输出了思考过程，未生成最终答案。请提高 max_tokens 参数。\n\n思考过程：\n{reasoning}"
+        return reasoning, "模型仅返回了思考过程，未输出最终答案。已将思考过程作为答案返回。"
     else:
         return "", "模型未返回任何内容。"
 
+# ------------------- URL 规范化 -------------------
 def normalize_api_url(url):
-    """规范化 API 地址，确保以 /v1 结尾"""
     url = url.rstrip("/")
     if not url.endswith("/v1"):
         url += "/v1"
     return url
 
 def get_actual_model_name(port):
-    """从运行中的 llama-server 获取真实注册的模型名"""
     try:
-        import requests
         resp = requests.get(f"http://127.0.0.1:{port}/v1/models", timeout=2)
         if resp.status_code == 200:
             models = resp.json().get("data", [])
@@ -45,3 +103,33 @@ def get_actual_model_name(port):
     except:
         pass
     return None
+
+# ------------------- 流式请求辅助（生成器） -------------------
+def stream_chat_completion(api_url, payload, timeout):
+    """
+    发送流式请求，逐块 yield delta 内容。
+    使用全局 Session 复用连接。
+    """
+    session = get_session(api_url)
+    with session.post(
+        f"{api_url}/chat/completions",
+        json=payload,
+        timeout=timeout,
+        stream=True
+    ) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines(decode_unicode=True):
+            if line and line.startswith("data: "):
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    import json
+                    chunk = json.loads(data)
+                    delta = chunk["choices"][0].get("delta", {})
+                    # 修正：使用 .get() 安全取值，避免 KeyError
+                    content = delta.get("content")
+                    if content:
+                        yield content
+                except:
+                    continue
