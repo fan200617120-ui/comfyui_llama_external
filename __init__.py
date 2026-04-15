@@ -10,18 +10,20 @@ from .ollama_nodes import (
     OllamaImageToPrompt,
     OllamaTextChat
 )
+from .agent_node import (
+    LLMAgentPlanner
+)
 
 NODE_CLASS_MAPPINGS = {
-    # llama.cpp 节点
     "LLMExternalServerAuto": LLMExternalServerAuto,
     "LLMExternalServer": LLMExternalServer,
     "LLMExternalKiller": LLMExternalKiller,
     "LLMExternalImageToPrompt": LLMExternalImageToPrompt,
     "LLMExternalTextChat": LLMExternalTextChat,
-    # Ollama 节点
     "OllamaServer": OllamaServer,
     "OllamaImageToPrompt": OllamaImageToPrompt,
     "OllamaTextChat": OllamaTextChat,
+    "LLMAgentPlanner": LLMAgentPlanner,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -33,6 +35,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "OllamaServer": "Ollama 连接检查",
     "OllamaImageToPrompt": "本地图像反推提示词 (Ollama)",
     "OllamaTextChat": "本地LLM写提示词 (Ollama)",
+    "LLMAgentPlanner": "LLM任务规划器 (Agent)",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
