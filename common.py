@@ -111,7 +111,6 @@ def get_actual_model_name(port):
 # ------------------- 流式请求辅助 -------------------
 def stream_chat_completion(api_url, payload, timeout):
     session = get_session(api_url)
-
     with session.post(
         f"{api_url}/chat/completions",
         json=payload,
@@ -119,29 +118,22 @@ def stream_chat_completion(api_url, payload, timeout):
         stream=True
     ) as resp:
         resp.raise_for_status()
-
         for line in resp.iter_lines(decode_unicode=False):
             if not line:
                 continue
-
             try:
-                line = line.decode("utf-8")
-            except:
+                decoded_line = line.decode("utf-8")
+            except UnicodeDecodeError:
                 continue
-
-            if line.startswith("data: "):
-                data = line[6:]
-
-                if data == "[DONE]":
+            if decoded_line.startswith("data: "):
+                data = decoded_line[6:]
+                if data.strip() == "[DONE]":
                     break
-
                 try:
                     chunk = json.loads(data)
                     delta = chunk["choices"][0].get("delta", {})
                     content = delta.get("content")
-
                     if content:
                         yield content
-
-                except:
+                except json.JSONDecodeError:
                     continue
