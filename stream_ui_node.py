@@ -15,8 +15,18 @@ class LLMStreamUI:
             "required": {
                 "api_url": ("STRING", {"default": "http://127.0.0.1:11434/v1"}),
                 "model_name": ("STRING", {"default": "llama3.2"}),
-                "prompt": ("STRING", {"multiline": True, "default": "写一首关于春天的诗"}),
-                "system_prompt": ("STRING", {"multiline": True, "default": "你是一个专业的AI助手。"}),
+                "prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "写一首关于春天的诗",
+                    "lines": 2,
+                    "display": "内容提示词"
+                }),
+                "system_prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "你是一个专业的AI助手。",
+                    "lines": 2,
+                    "display": "系统提示词"
+                }),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.1}),
                 "max_tokens": ("INT", {"default": 1024, "min": 256, "max": 8192}),
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 600}),
