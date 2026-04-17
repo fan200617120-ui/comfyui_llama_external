@@ -38,11 +38,14 @@
 
 二、安装教程
 将整个 LLM_External 文件夹放入 ComfyUI 的 custom_nodes 目录下：
-
 ComfyUI/custom_nodes/
+
 里面包含：
+
 __init__.py
+
 common.py
+
 server_manager.py
 llama_nodes.py
 ollama_nodes.py
