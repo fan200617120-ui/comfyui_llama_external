@@ -22,6 +22,7 @@ class OllamaServer:
 
     def check(self, api_url, model_name, timeout, max_tokens):
         api_url = normalize_api_url(api_url)
+        model_name = model_name.strip() 
         test_url = f"{api_url}/models"
         try:
             session = get_session(api_url)

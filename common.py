@@ -23,6 +23,7 @@ if sys.platform == "win32":
 _session_cache = {}
 
 def get_session(base_url, timeout=30):
+    """获取带重试机制的 requests Session"""
     if base_url not in _session_cache:
         session = requests.Session()
         retry = Retry(
@@ -33,11 +34,11 @@ def get_session(base_url, timeout=30):
         adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=10)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
-        session.timeout = timeout
         _session_cache[base_url] = session
     return _session_cache[base_url]
 
 def clear_sessions():
+    """程序退出时关闭所有 session"""
     for url, session in _session_cache.items():
         try:
             session.close()
@@ -56,7 +57,8 @@ FRIENDLY_ERRORS = {
     "port_conflict": "端口被其他模型占用且模型不匹配。请更换端口或先杀死旧进程。",
 }
 
-def friendly_error(original_exception, context=""):
+def friendly_error(original_exception, context=" "):
+    """将技术异常转换为用户友好的错误消息"""
     e = original_exception
     if isinstance(e, requests.exceptions.ConnectionError):
         return FRIENDLY_ERRORS["ConnectionError"]
@@ -71,6 +73,7 @@ def friendly_error(original_exception, context=""):
 
 # ------------------- 图像编码 -------------------
 def encode_image(image_tensor, format="PNG"):
+    """将 ComfyUI 图像 tensor 编码为 base64"""
     i = 255. * image_tensor[0].cpu().numpy()
     img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
     if format.upper() == "JPEG" and img.mode == "RGBA":
@@ -81,6 +84,7 @@ def encode_image(image_tensor, format="PNG"):
 
 # ------------------- 响应提取 -------------------
 def extract_response(message):
+    """从消息中提取内容，支持 reasoning_content 降级"""
     content = message.get("content", "").strip()
     reasoning = message.get("reasoning_content", "").strip()
     if content:
@@ -92,12 +96,14 @@ def extract_response(message):
 
 # ------------------- URL 规范化 -------------------
 def normalize_api_url(url):
+    """确保 API URL 以 /v1 结尾"""
     url = url.rstrip("/")
     if not url.endswith("/v1"):
         url += "/v1"
     return url
 
 def get_actual_model_name(port):
+    """查询端口上实际运行的模型名称"""
     try:
         resp = requests.get(f"http://127.0.0.1:{port}/v1/models", timeout=2)
         if resp.status_code == 200:
@@ -110,6 +116,7 @@ def get_actual_model_name(port):
 
 # ------------------- 流式请求辅助 -------------------
 def stream_chat_completion(api_url, payload, timeout):
+    """生成器：流式获取 chat completion 响应"""
     session = get_session(api_url)
     with session.post(
         f"{api_url}/chat/completions",
@@ -122,16 +129,17 @@ def stream_chat_completion(api_url, payload, timeout):
             if not line:
                 continue
             try:
-                decoded_line = line.decode("utf-8")
-            except UnicodeDecodeError:
+                # 安全解码，跳过无效字节
+                decoded_line = line.decode("utf-8", errors="ignore")
+            except:
                 continue
             if decoded_line.startswith("data: "):
-                data = decoded_line[6:]
-                if data.strip() == "[DONE]":
+                data = decoded_line[6:].strip()
+                if data == "[DONE]":
                     break
                 try:
                     chunk = json.loads(data)
-                    delta = chunk["choices"][0].get("delta", {})
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
                     content = delta.get("content")
                     if content:
                         yield content

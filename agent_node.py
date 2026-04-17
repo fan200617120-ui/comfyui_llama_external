@@ -8,6 +8,7 @@ class LLMAgentPlanner:
     输出格式为 JSON 数组，每个步骤包含 step_name, action, params。
     可用于后续节点自动化执行（需配合自定义流程）。
     """
+    
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -21,7 +22,7 @@ class LLMAgentPlanner:
                 "max_tokens": ("INT", {"default": 1024, "min": 256, "max": 4096}),
             }
         }
-
+    
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("plan_json", "plan_text")
     FUNCTION = "plan"
@@ -31,7 +32,7 @@ class LLMAgentPlanner:
         from .common import normalize_api_url
         api_url = normalize_api_url(api_url)
         if api_url.startswith("ERROR") or api_url.startswith("错误"):
-            return (api_url, "")
+            return (api_url, " ")
 
         payload = {
             "model": model_name,
@@ -48,23 +49,68 @@ class LLMAgentPlanner:
             session = get_session(api_url)
             resp = session.post(f"{api_url}/chat/completions", json=payload, timeout=timeout)
             resp.raise_for_status()
-            msg = resp.json()["choices"][0]["message"]
+            
+            # 安全解析响应
+            resp_json = resp.json()
+            choices = resp_json.get("choices", [])
+            if not choices:
+                return ("[]", "错误：API 返回空 choices")
+            
+            msg = choices[0].get("message", {})
             content = msg.get("content", "").strip()
 
-            # 修正：更稳健的 JSON 提取
-            # 使用非贪婪匹配找出所有可能的 JSON 数组
-            json_candidates = re.findall(r'\[[\s\S]*?\]', content)
-            for candidate in json_candidates:
-                try:
-                    parsed = json.loads(candidate)
-                    # 确保解析后是列表（任务规划应为列表）
-                    if isinstance(parsed, list):
-                        return (json.dumps(parsed, ensure_ascii=False), content)
-                except:
-                    continue
-
-            # 如果没有提取到合法 JSON，返回空对象和原始文本供用户检查
+            # 稳健的 JSON 数组提取
+            parsed_list, raw_text = self._extract_json_array(content)
+            if parsed_list is not None:
+                return (json.dumps(parsed_list, ensure_ascii=False), raw_text)
+            
+            # 降级：尝试解析单个对象
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, (dict, list)):
+                    result = parsed if isinstance(parsed, list) else [parsed]
+                    return (json.dumps(result, ensure_ascii=False), content)
+            except:
+                pass
+            
             return ("[]", content)
+            
         except Exception as e:
             err_msg = friendly_error(e, context=api_url)
-            return (err_msg, "")
+            return (err_msg, " ")
+    
+    @staticmethod
+    def _extract_json_array(content: str):
+        """提取最外层的 JSON 数组，支持 Markdown 代码块包裹"""
+        # 1. 清理 Markdown 代码块
+        cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip(), flags=re.MULTILINE)
+        
+        # 2. 尝试直接解析
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, list):
+                return parsed, content
+        except json.JSONDecodeError:
+            pass
+        
+        # 3. 降级：使用正则提取最外层数组（支持嵌套）
+        stack = 0
+        start = -1
+        for i, char in enumerate(cleaned):
+            if char == '[':
+                if stack == 0:
+                    start = i
+                stack += 1
+            elif char == ']':
+                stack -= 1
+                if stack == 0 and start != -1:
+                    candidate = cleaned[start:i+1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, list):
+                            return parsed, content
+                    except:
+                        pass
+                    start = -1
+        
+        return None, content
