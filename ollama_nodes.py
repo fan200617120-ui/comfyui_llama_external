@@ -1,7 +1,12 @@
 import requests
 from .common import (
-    encode_image, extract_response, normalize_api_url,
-    get_session, stream_chat_completion, friendly_error
+    encode_image,
+    normalize_api_url,
+    get_session,
+    stream_chat_completion,
+    friendly_error,
+    apply_thinking_mode,
+    execute_non_stream_chat
 )
 
 class OllamaServer:
@@ -21,24 +26,28 @@ class OllamaServer:
     CATEGORY = "LLM_External"
 
     def check(self, api_url, model_name, timeout, max_tokens):
-        api_url = normalize_api_url(api_url)
-        model_name = model_name.strip() 
-        test_url = f"{api_url}/models"
+        base_url = api_url.rstrip('/')
+        if base_url.endswith('/v1'):
+            base_url = base_url[:-3]
+        tags_url = f"{base_url}/api/tags"
         try:
-            session = get_session(api_url)
-            r = session.get(test_url, timeout=5)
+            session = get_session(base_url)
+            r = session.get(tags_url, timeout=5)
             if r.status_code != 200:
                 return (f"错误：Ollama 服务响应异常 ({r.status_code})", "", timeout, max_tokens)
-            models_data = r.json()
-            available_models = [m["id"] for m in models_data.get("data", [])]
+            data = r.json()
+            models = data.get("models", [])
+            available_models = [m["name"] for m in models]
             if model_name not in available_models:
                 return (f"错误：模型 '{model_name}' 未找到。\n可用模型: {', '.join(available_models) if available_models else '无'}\n提示：请先运行 'ollama pull {model_name}' 下载模型。", "", timeout, max_tokens)
         except requests.exceptions.ConnectionError:
             return ("错误：无法连接 Ollama。\n请确认 Ollama 已启动 (ollama serve) 且地址正确。", "", timeout, max_tokens)
-        except Exception as e:
+        except (requests.exceptions.RequestException, ValueError) as e:
             return (friendly_error(e, context=api_url), "", timeout, max_tokens)
         print(f"[Ollama] 连接成功，模型 {model_name} 可用")
-        return (api_url, model_name, timeout, max_tokens)
+        normalized = normalize_api_url(api_url)
+        return (normalized, model_name, timeout, max_tokens)
+
 
 class OllamaImageToPrompt:
     @classmethod
@@ -53,16 +62,14 @@ class OllamaImageToPrompt:
                 "timeout": ("INT", {"default": 180, "min": 30, "max": 900, "step": 10}),
                 "max_tokens": ("INT", {"default": 4096, "min": 256, "max": 16384, "step": 256}),
                 "stream": ("BOOLEAN", {"default": False, "tooltip": "是否启用流式输出（实时打印token）"}),
+                "thinking_mode": (["跟随模型默认", "强制关闭思考", "强制开启思考"], {"default": "跟随模型默认"}),
             }
         }
     RETURN_TYPES = ("STRING",)
     FUNCTION = "generate"
     CATEGORY = "LLM_External"
 
-    def generate(self, api_url, model_name, image, prompt, temperature, timeout, max_tokens, stream):
-        api_url = normalize_api_url(api_url)
-        if api_url.startswith("ERROR") or api_url.startswith("错误"):
-            return (api_url,)
+    def generate(self, api_url, model_name, image, prompt, temperature, timeout, max_tokens, stream, thinking_mode):
         image_b64 = encode_image(image, format="PNG")
         payload = {
             "model": model_name,
@@ -77,26 +84,28 @@ class OllamaImageToPrompt:
             "max_tokens": max_tokens,
             "stream": stream
         }
+        apply_thinking_mode(payload, model_name, thinking_mode)
+
         try:
             if stream:
-                full_text = ""
+                full_text_parts = []
                 print("[Ollama 流式输出开始]")
-                for token in stream_chat_completion(api_url, payload, timeout):
-                    print(token, end="", flush=True)
-                    full_text += token
+                try:
+                    for token in stream_chat_completion(api_url, payload, timeout):
+                        print(token, end="", flush=True)
+                        full_text_parts.append(token)
+                except (requests.exceptions.RequestException, ValueError) as e:
+                    error_msg = f"\n[流式处理错误] {str(e)}"
+                    print(error_msg, end="")
+                    full_text_parts.append(error_msg)
                 print("\n[Ollama 流式输出结束]")
-                return (full_text,)
+                return ("".join(full_text_parts),)
             else:
-                session = get_session(api_url)
-                resp = session.post(f"{api_url}/chat/completions", json=payload, timeout=timeout)
-                resp.raise_for_status()
-                msg = resp.json()["choices"][0]["message"]
-                text, warn = extract_response(msg)
-                if warn:
-                    return (f"[注意] {warn}\n\n{text}",)
-                return (text,)
+                result, _ = execute_non_stream_chat(api_url, payload, timeout)
+                return (result,)
         except Exception as e:
             return (friendly_error(e, context=api_url),)
+
 
 class OllamaTextChat:
     @classmethod
@@ -111,16 +120,14 @@ class OllamaTextChat:
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 600, "step": 10}),
                 "max_tokens": ("INT", {"default": 4096, "min": 256, "max": 16384, "step": 256}),
                 "stream": ("BOOLEAN", {"default": False, "tooltip": "是否启用流式输出（实时打印token）"}),
+                "thinking_mode": (["跟随模型默认", "强制关闭思考", "强制开启思考"], {"default": "跟随模型默认"}),
             }
         }
     RETURN_TYPES = ("STRING",)
     FUNCTION = "generate"
     CATEGORY = "LLM_External"
 
-    def generate(self, api_url, model_name, system_prompt, user_prompt, temperature, timeout, max_tokens, stream):
-        api_url = normalize_api_url(api_url)
-        if api_url.startswith("ERROR") or api_url.startswith("错误"):
-            return (api_url,)
+    def generate(self, api_url, model_name, system_prompt, user_prompt, temperature, timeout, max_tokens, stream, thinking_mode):
         payload = {
             "model": model_name,
             "messages": [
@@ -131,23 +138,24 @@ class OllamaTextChat:
             "max_tokens": max_tokens,
             "stream": stream
         }
+        apply_thinking_mode(payload, model_name, thinking_mode)
+
         try:
             if stream:
-                full_text = ""
+                full_text_parts = []
                 print("[Ollama 流式输出开始]")
-                for token in stream_chat_completion(api_url, payload, timeout):
-                    print(token, end="", flush=True)
-                    full_text += token
+                try:
+                    for token in stream_chat_completion(api_url, payload, timeout):
+                        print(token, end="", flush=True)
+                        full_text_parts.append(token)
+                except (requests.exceptions.RequestException, ValueError) as e:
+                    error_msg = f"\n[流式处理错误] {str(e)}"
+                    print(error_msg, end="")
+                    full_text_parts.append(error_msg)
                 print("\n[Ollama 流式输出结束]")
-                return (full_text,)
+                return ("".join(full_text_parts),)
             else:
-                session = get_session(api_url)
-                resp = session.post(f"{api_url}/chat/completions", json=payload, timeout=timeout)
-                resp.raise_for_status()
-                msg = resp.json()["choices"][0]["message"]
-                text, warn = extract_response(msg)
-                if warn:
-                    return (f"[注意] {warn}\n\n{text}",)
-                return (text,)
+                result, _ = execute_non_stream_chat(api_url, payload, timeout)
+                return (result,)
         except Exception as e:
             return (friendly_error(e, context=api_url),)

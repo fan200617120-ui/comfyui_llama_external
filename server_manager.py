@@ -11,11 +11,11 @@ from .common import friendly_error
 ACTIVE_SERVERS = {}
 SERVER_LOCK = threading.Lock()
 
+
 def kill_process_on_port(port):
     """跨平台杀死占用指定端口的进程"""
     try:
         if sys.platform == "win32":
-            # Windows: 使用 netstat + taskkill
             result = subprocess.run(
                 f'netstat -ano | findstr :{port} | findstr LISTENING',
                 shell=True, capture_output=True, text=True
@@ -23,8 +23,10 @@ def kill_process_on_port(port):
             lines = result.stdout.strip().split('\n')
             pids = set()
             for line in lines:
+                if not line.strip():
+                    continue
                 parts = line.split()
-                if len(parts) >= 5:
+                if len(parts) >= 5 and parts[1].endswith(f':{port}'):
                     pid = parts[-1]
                     if pid.isdigit():
                         pids.add(int(pid))
@@ -32,8 +34,7 @@ def kill_process_on_port(port):
                 subprocess.run(f'taskkill /F /PID {pid}', shell=True, capture_output=True)
                 print(f"[LLM External] 已强制杀死 PID {pid} (端口 {port})")
         else:
-            # Linux/macOS: 使用 lsof 或 fuser
-            for cmd in [f"lsof -ti :{port} | xargs kill -9 2>/dev/null", 
+            for cmd in [f"lsof -ti :{port} | xargs kill -9 2>/dev/null",
                         f"fuser -k {port}/tcp 2>/dev/null"]:
                 result = subprocess.run(cmd, shell=True, capture_output=True)
                 if result.returncode == 0:
@@ -42,32 +43,52 @@ def kill_process_on_port(port):
     except Exception as e:
         print(f"[LLM External] 杀死端口 {port} 进程时出错: {e}")
 
+
 def cleanup_servers():
     """程序退出时清理所有托管的服务器进程"""
     with SERVER_LOCK:
+        to_delete = []
         for url, proc in list(ACTIVE_SERVERS.items()):
             if proc and isinstance(proc, subprocess.Popen):
                 try:
                     proc.terminate()
                     proc.wait(timeout=3)
-                except:
-                    proc.kill()
-        ACTIVE_SERVERS.clear()
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.kill()
+                    except Exception as e:
+                        print(f"[LLM External] 强制杀死进程失败: {e}")
+                except Exception as e:
+                    print(f"[LLM External] 清理进程异常: {e}")
+            to_delete.append(url)
+        for url in to_delete:
+            ACTIVE_SERVERS.pop(url, None)
+
 
 atexit.register(cleanup_servers)
 
+
 def kill_server(api_url=None, kill_all=False):
+    """杀死指定或所有外部 LLM 服务进程"""
     global ACTIVE_SERVERS
     with SERVER_LOCK:
         if kill_all:
+            to_delete = []
             for url, proc in list(ACTIVE_SERVERS.items()):
                 if proc and isinstance(proc, subprocess.Popen):
                     try:
                         proc.terminate()
                         proc.wait(timeout=3)
-                    except:
-                        proc.kill()
-            ACTIVE_SERVERS.clear()
+                    except subprocess.TimeoutExpired:
+                        try:
+                            proc.kill()
+                        except Exception as e:
+                            print(f"[LLM External] 强制杀死进程失败: {e}")
+                    except Exception as e:
+                        print(f"[LLM External] 终止进程异常: {e}")
+                to_delete.append(url)
+            for url in to_delete:
+                ACTIVE_SERVERS.pop(url, None)
             return "已杀死所有外部 LLM 进程"
         elif api_url and api_url in ACTIVE_SERVERS:
             proc = ACTIVE_SERVERS[api_url]
@@ -75,11 +96,17 @@ def kill_server(api_url=None, kill_all=False):
                 try:
                     proc.terminate()
                     proc.wait(timeout=3)
-                except:
-                    proc.kill()
-            del ACTIVE_SERVERS[api_url]
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.kill()
+                    except Exception as e:
+                        print(f"[LLM External] 强制杀死进程失败: {e}")
+                except Exception as e:
+                    print(f"[LLM External] 终止进程异常: {e}")
+            ACTIVE_SERVERS.pop(api_url, None)
             return f"已杀死进程: {api_url}"
-    return "未找到对应的进程"
+        return "未找到对应的进程"
+
 
 def get_running_model_at_port(port):
     """查询端口上运行的模型名称"""
@@ -90,15 +117,18 @@ def get_running_model_at_port(port):
             models = data.get("data", [])
             if models:
                 return models[0]["id"]
-    except:
+    except (requests.RequestException, requests.JSONDecodeError):
         pass
+    except Exception as e:
+        print(f"[LLM External] 查询端口 {port} 模型异常: {e}")
     return None
+
 
 def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_size, force_reload=False):
     """启动或复用 llama-server 进程"""
     api_url = f"http://127.0.0.1:{port}/v1"
     expected_model_name = os.path.splitext(os.path.basename(model_path))[0]
-    
+
     if force_reload:
         kill_process_on_port(port)
         with SERVER_LOCK:
@@ -110,16 +140,14 @@ def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_
                         proc.wait(timeout=2)
                     except:
                         proc.kill()
-                del ACTIVE_SERVERS[api_url]
+                ACTIVE_SERVERS.pop(api_url, None)
         time.sleep(2)
 
-    # 检查端口是否已有兼容模型在运行
     running_model = get_running_model_at_port(port)
     if running_model is not None:
         if running_model.lower() == expected_model_name.lower():
             print(f"[LLM External] 端口 {port} 已有模型 {running_model} 在运行，直接复用。")
             with SERVER_LOCK:
-                # 记录为外部进程，不清理
                 ACTIVE_SERVERS[api_url] = "external"
             return api_url, running_model, None
         else:
@@ -128,7 +156,6 @@ def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_
     if not os.path.exists(exe_path):
         return None, None, f"错误：找不到 llama-server 可执行文件\n{exe_path}\n请确认路径是否正确。"
 
-    # 命令行参数构建
     cmd = [
         exe_path,
         "-m", model_path,
@@ -137,11 +164,11 @@ def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_
         "--port", str(port),
         "--host", "127.0.0.1"
     ]
-    if mmproj_path and os.path.exists(mmproj_path):
-        cmd.extend(["--mmproj", mmproj_path])
+    if mmproj_path and mmproj_path.strip() and os.path.exists(mmproj_path.strip()):
+        cmd.extend(["--mmproj", mmproj_path.strip()])
 
     print(f"[LLM External] 正在静默启动: {' '.join(cmd)}")
-    
+
     try:
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
@@ -155,7 +182,6 @@ def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_
                 stderr=subprocess.DEVNULL
             )
         else:
-            # Linux/macOS: 使用 preexec_fn 忽略 SIGHUP
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
@@ -176,13 +202,26 @@ def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_
                 with SERVER_LOCK:
                     ACTIVE_SERVERS[api_url] = process
                 return api_url, actual_model, None
-        except:
+        except (requests.RequestException, requests.JSONDecodeError):
             pass
-        
-        # 检查进程是否意外退出
-        if process.poll() is not None:
-            return None, None, f"错误：llama-server 启动后立即退出，可能是模型文件损坏或显存不足。"
+        except Exception as e:
+            print(f"[LLM External] 检查模型状态异常: {e}")
+
+        returncode = process.poll()
+        if returncode is not None:
+            with SERVER_LOCK:
+                ACTIVE_SERVERS.pop(api_url, None)
+            return None, None, f"错误：llama-server 启动后立即退出（返回码: {returncode}），可能是模型文件损坏、显存不足或配置错误。"
         time.sleep(1)
-    
-    process.kill()
-    return None, None, "错误：模型加载超时（3分钟），请检查模型大小或增加等待时间。"
+
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+    except Exception as e:
+        print(f"[LLM External] 清理超时进程异常: {e}")
+
+    with SERVER_LOCK:
+        ACTIVE_SERVERS.pop(api_url, None)
+    return None, None, "错误：模型加载超时（3分钟），请检查模型大小、显存或网络连接。"

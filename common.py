@@ -10,7 +10,7 @@ import sys
 import os
 import json
 
-# === 强制设置 Windows 控制台为 UTF-8（无感修复） ===
+# === 强制设置 Windows 控制台为 UTF-8 ===
 if sys.platform == "win32":
     try:
         import ctypes
@@ -39,7 +39,7 @@ def get_session(base_url, timeout=30):
 
 def clear_sessions():
     """程序退出时关闭所有 session"""
-    for url, session in _session_cache.items():
+    for url, session in list(_session_cache.items()):
         try:
             session.close()
         except:
@@ -57,7 +57,7 @@ FRIENDLY_ERRORS = {
     "port_conflict": "端口被其他模型占用且模型不匹配。请更换端口或先杀死旧进程。",
 }
 
-def friendly_error(original_exception, context=" "):
+def friendly_error(original_exception, context=""):
     """将技术异常转换为用户友好的错误消息"""
     e = original_exception
     if isinstance(e, requests.exceptions.ConnectionError):
@@ -97,7 +97,11 @@ def extract_response(message):
 # ------------------- URL 规范化 -------------------
 def normalize_api_url(url):
     """确保 API URL 以 /v1 结尾"""
-    url = url.rstrip("/")
+    if not url or not isinstance(url, str):
+        return ""
+    url = url.strip().rstrip("/")
+    if not url:
+        return ""
     if not url.endswith("/v1"):
         url += "/v1"
     return url
@@ -114,34 +118,73 @@ def get_actual_model_name(port):
         pass
     return None
 
+# ------------------- 统一思考模式注入 -------------------
+def apply_thinking_mode(payload: dict, model_name: str, thinking_mode: str):
+    """根据模型名称和选择，向 payload 中注入对应的思考模式参数"""
+    if thinking_mode == "跟随模型默认":
+        return
+    model_lower = model_name.lower()
+    force_on = (thinking_mode == "强制开启思考")
+    if "deepseek" in model_lower:
+        payload["chat_template_kwargs"] = {"thinking": force_on}
+    elif "glm" in model_lower:
+        payload["thinking"] = {"type": "enabled" if force_on else "disabled"}
+    elif "qwen" in model_lower or "qwq" in model_lower:
+        payload["enable_thinking"] = force_on
+
+# ------------------- 统一非流式请求执行 -------------------
+def execute_non_stream_chat(api_url, payload, timeout):
+    """
+    执行非流式 Chat Completion 请求。
+    返回: (result_text: str, is_success: bool)
+    """
+    try:
+        session = get_session(api_url)
+        resp = session.post(f"{api_url}/chat/completions", json=payload, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("choices") or len(data["choices"]) == 0:
+            return "错误：API 返回空的choices列表", False
+        msg = data["choices"][0].get("message")
+        if not msg:
+            return "错误：API 返回的message字段为空", False
+        text, warn = extract_response(msg)
+        if warn:
+            return f"[注意] {warn}\n\n{text}" if text else f"[注意] {warn}", False
+        return text, True
+    except (requests.exceptions.RequestException, ValueError) as e:
+        return friendly_error(e, context=api_url), False
+
 # ------------------- 流式请求辅助 -------------------
 def stream_chat_completion(api_url, payload, timeout):
-    """生成器：流式获取 chat completion 响应"""
+    """生成器：流式获取 chat completion 响应，同时支持 content 和 reasoning_content"""
     session = get_session(api_url)
     with session.post(
-        f"{api_url}/chat/completions",
-        json=payload,
-        timeout=timeout,
-        stream=True
+        f"{api_url}/chat/completions", json=payload, timeout=timeout, stream=True
     ) as resp:
         resp.raise_for_status()
-        for line in resp.iter_lines(decode_unicode=False):
-            if not line:
+        buffer = ""
+        for chunk in resp.iter_content(chunk_size=8192):
+            if not chunk:
                 continue
-            try:
-                # 安全解码，跳过无效字节
-                decoded_line = line.decode("utf-8", errors="ignore")
-            except:
-                continue
-            if decoded_line.startswith("data: "):
-                data = decoded_line[6:].strip()
+            buffer += chunk.decode("utf-8", errors="ignore")
+            
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                if not line.startswith("data:"):
+                    continue
+                
+                data = line[5:].strip() if line.startswith("data: ") else line[5:].strip()
                 if data == "[DONE]":
-                    break
+                    return
+                
                 try:
+                    if not data:
+                        continue
                     chunk = json.loads(data)
                     delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    content = delta.get("content")
+                    content = delta.get("content") or delta.get("reasoning_content")
                     if content:
                         yield content
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, KeyError, IndexError, TypeError):
                     continue

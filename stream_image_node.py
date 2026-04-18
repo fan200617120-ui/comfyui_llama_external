@@ -1,17 +1,33 @@
 import json
 import time
 from server import PromptServer
-from .common import get_session, normalize_api_url, friendly_error, apply_thinking_mode
+from .common import (
+    encode_image,
+    get_session,
+    normalize_api_url,
+    friendly_error,
+    apply_thinking_mode
+)
 
-class LLMStreamUI:
+class LLMStreamImageToPrompt:
+    """
+    多模态流式反推节点（通用 OpenAI Vision API）
+    支持 llama.cpp、Ollama、vLLM、LM Studio 等任何兼容 /v1/chat/completions 的后端。
+    前端支持流式 Markdown 渲染（需配合 llm_stream.js）
+    """
+    
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "api_url": ("STRING", {"default": "http://127.0.0.1:11434/v1"}),
-                "model_name": ("STRING", {"default": "llama3.2"}),
-                "system_prompt": ("STRING", {"multiline": True, "default": "You are a helpful AI assistant."}),
-                "user_prompt": ("STRING", {"multiline": True, "default": "请开始流式输出..."}),
+                "model_name": ("STRING", {"default": "llava"}),
+                "image": ("IMAGE",),
+                "prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "请详细描述这张图片，并生成用于AI绘画的高质量中文提示词。",
+                    "lines": 4
+                }),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0}),
                 "timeout": ("INT", {"default": 180}),
                 "max_tokens": ("INT", {"default": 4096}),
@@ -30,23 +46,36 @@ class LLMStreamUI:
     CATEGORY = "LLM_External"
     OUTPUT_NODE = True
 
-    def generate_stream(self, api_url, model_name, system_prompt, user_prompt, temperature, timeout, max_tokens, thinking_mode, unique_id):
+    def generate_stream(self, api_url, model_name, image, prompt,
+                        temperature, timeout, max_tokens, thinking_mode, unique_id):
         api_url = normalize_api_url(api_url)
         if api_url.startswith("ERROR") or api_url.startswith("错误"):
             if unique_id:
-                PromptServer.instance.send_sync("llm_stream_update", {"node_id": str(unique_id), "delta": api_url})
+                PromptServer.instance.send_sync(
+                    "llm_stream_update",
+                    {"node_id": str(unique_id), "delta": api_url}
+                )
             return (api_url,)
 
+        # 编码图像为 base64
+        image_b64 = encode_image(image, format="PNG")
+
+        # 构建 OpenAI Vision 格式的 payload
         payload = {
             "model": model_name,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
+                ]
+            }],
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True
         }
+
+        # 注入思考模式控制（与文本节点一致）
         apply_thinking_mode(payload, model_name, thinking_mode)
 
         full_text_parts = []
@@ -65,6 +94,8 @@ class LLMStreamUI:
                 for chunk in resp.iter_content(chunk_size=8192):
                     if not chunk:
                         continue
+                    if done_flag:
+                        break
 
                     buffer += chunk.decode("utf-8", errors="ignore")
 
@@ -85,6 +116,7 @@ class LLMStreamUI:
                                 continue
                             obj = json.loads(data)
                             delta = obj.get("choices", [{}])[0].get("delta", {})
+                            # 修复：兼容 reasoning_content 流式输出
                             current_delta = delta.get("content") or delta.get("reasoning_content")
                             if not current_delta:
                                 continue
@@ -93,6 +125,7 @@ class LLMStreamUI:
                             pending_delta_parts.append(current_delta)
 
                             now = time.time()
+                            # 节流推送：累积 6 字符或间隔超过 50ms
                             if len(pending_delta_parts) >= 6 or (now - last_push_time > 0.05):
                                 if unique_id:
                                     PromptServer.instance.send_sync(
@@ -105,9 +138,7 @@ class LLMStreamUI:
                         except json.JSONDecodeError:
                             continue
 
-                    if done_flag:
-                        break
-
+                # 推送最后剩余部分
                 if pending_delta_parts and unique_id:
                     PromptServer.instance.send_sync(
                         "llm_stream_update",
