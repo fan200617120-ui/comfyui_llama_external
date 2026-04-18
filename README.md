@@ -1,332 +1,269 @@
-📖 简介 🌟 LLM_External ComfyUI 插件使用手册
-ComfyUI LLM External 是一个为 ComfyUI 提供本地大语言模型（LLM）和视觉多模态模型集成的自定义节点包。它支持通过 Ollama、llama.cpp、LM Studio 等兼容 OpenAI API 的后端，在 ComfyUI 工作流中直接调用 LLM 进行文本生成、图像反推、任务规划等操作。
+我直接**把你这段内容，改成 GitHub 100% 不会乱的标准 Markdown**，你复制粘贴覆盖掉原来的 README.md 就行，一步到位，不用再调。
 
-核心特性
-🚀 流式输出（UI 版）：实时打字机效果，支持 Markdown 渲染，体验媲美 ChatGPT。
+# 👇 下面这整块，直接全选复制 → 粘贴到你的 README.md 里
 
-🖼️ 多模态支持：支持 LLaVA、Qwen2-VL 等视觉模型，实现图像反推提示词。
+```markdown
+# 📖 LLM_External ComfyUI 插件使用手册
 
-🧠 思考模式控制：针对 DeepSeek、Qwen、GLM 等模型，可强制开启/关闭推理思考过程。
+**ComfyUI LLM External** 是一个为 ComfyUI 提供本地大语言模型（LLM）和视觉多模态模型集成的自定义节点包。
+它支持通过 Ollama、llama.cpp、LM Studio 等兼容 OpenAI API 的后端，在 ComfyUI 工作流中直接调用 LLM 进行文本生成、图像反推、任务规划等操作。
 
-🔧 服务自动管理：自动启动/复用 llama-server 进程，支持显存优化。
+---
 
-🛡️ 健壮错误处理：友好的中文错误提示，降低调试门槛。
+## 核心特性
 
-一、简介
+- 🚀 **流式输出（UI 版）**：实时打字机效果，支持 Markdown 渲染，体验媲美 ChatGPT
+- 🖼️ **多模态支持**：支持 LLaVA、Qwen2-VL 等视觉模型，实现图像反推提示词
+- 🧠 **思考模式控制**：针对 DeepSeek、Qwen、GLM 等模型，可强制开启/关闭推理思考过程
+- 🔧 **服务自动管理**：自动启动/复用 llama-server 进程，支持显存优化
+- 🛡️ **健壮错误处理**：友好的中文错误提示，降低调试门槛
+
 ![Workflow Example](https://raw.githubusercontent.com/fan200617120-ui/comfyui_llama_external/main/workflow_examples/llama_image_to_prompt_basic.png)
 
-📑 目录
+---
+
+## 📑 目录
+
 1. 功能亮点
-
 2. 环境与安装
-
 3. 节点详解
-        
-
-  1. 服务管理与启动
-
-  2. 文本对话与生成
-
-  3. 图像理解与反推
-
-  4. 智能体任务规划
-
+   - 服务管理与启动
+   - 文本对话与生成
+   - 图像理解与反推
+   - 智能体任务规划
 4. 经典工作流搭建指南
-
 5. 常见问题排查 (FAQ)
 
-✨ 功能亮点
+---
 
-- 双后端支持：原生兼容 Ollama 和 llama.cpp (llama-server.exe)。
+## ✨ 功能亮点
 
-- 自动寻址与复用：自动检测端口模型，避免重复加载浪费显存。
+- 双后端支持：原生兼容 Ollama 和 llama.cpp (llama-server.exe)
+- 自动寻址与复用：自动检测端口模型，避免重复加载浪费显存
+- 多模态视觉：支持 LLaVA、Qwen2-VL 等视觉模型进行图生文
+- Agent 规划：将自然语言需求自动拆解为结构化 JSON 工作流
+- 🔥 **UI 流式输出**：独占黑科技，文本在节点框内一边生成一边刷新（类似 ChatGPT 打字效果），告别枯燥等待
 
-- 多模态视觉：支持 LLaVA、Qwen2-VL 等视觉模型进行图生文。
+![Workflow Example](https://raw.githubusercontent.com/fan200617120-ui/comfyui_llama_external/main/workflow_examples/llama_image_to_prompt_basic_new.png)
 
-- Agent 规划：将自然语言需求自动拆解为结构化 JSON 工作流。
+---
 
-- 🔥 UI 流式输出：独占的黑科技，文本在节点框内一边生成一边刷新（类似 ChatGPT 打字效果），告别枯燥等待。
-  ![Workflow Example](https://raw.githubusercontent.com/fan200617120-ui/comfyui_llama_external/main/workflow_examples/llama_image_to_prompt_basic_new.png)
+## 二、安装教程
 
-二、安装教程
-将整个 LLM_External 文件夹放入 ComfyUI 的 custom_nodes 目录下：
+将整个 `LLM_External` 文件夹放入 ComfyUI 的 `custom_nodes` 目录下：
 
-ComfyUI/custom_nodes/里面包含：
+```
+ComfyUI/custom_nodes/
+├── __init__.py
+├── common.py
+├── server_manager.py
+├── llama_nodes.py
+├── ollama_nodes.py
+├── agent_node.py
+├── stream_ui_node.py
+└── js/llm_stream.js
+```
 
-__init__.py
+---
 
-common.py
+### 2.1 前置条件
 
-server_manager.py
+#### 方案一：使用 llama.cpp（推荐）
 
-llama_nodes.py
+1. 下载 llama.cpp Windows 预编译包
+   例如：`llama-b8784-bin-win-cuda-12.4-x64.zip`
+2. 解压到本地目录，例如：
+   ```
+   F:\AItools\LLM\llama\
+   ```
+3. 准备至少一个 GGUF 格式大模型文件（从 HuggingFace 等渠道下载）
 
-ollama_nodes.py
+> 📌 注意：插件不提供模型文件，请自行获取并遵守模型许可证。
 
-agent_node.py
+#### 方案二：使用 Ollama
 
-stream_ui_node.py
+1. 安装 Ollama：https://ollama.com/
+   确保服务运行在默认地址 `http://127.0.0.1:11434`
 
-js/llm_stream.js
+2. 拉取视觉模型：
+   ```bash
+   ollama pull llava:13b
+   ollama pull bakllava
+   ```
 
+---
 
-2.1 前置条件
+### 2.2 安装插件
 
-方案一：使用 llama.cpp（推荐）
-https://github.com/ggml-org/llama.cpp/releases
+1. 进入 ComfyUI 的 `custom_nodes` 目录：
+   ```
+   ComfyUI_windows_portable\ComfyUI\custom_nodes\
+   ```
 
-1. 下载 llama.cpp Windows 预编译包（例如 llama-b8784-bin-win-cuda-12.4-x64.zip）
+2. 克隆本仓库或解压插件压缩包到该目录，确保文件夹名为 `comfyui_llama_external`
 
-2. 解压到本地目录，例如：F:\AItools\LLM\llama\
+3. 重启 ComfyUI
 
-3. 准备至少一个 GGUF 格式的大模型文件（可以从 HuggingFace 等渠道下载）
+---
 
-📌 注意：插件不提供模型文件，请自行获取并遵守模型许可证。
+### 2.3 安装 Python 依赖
 
-方案二：使用 Ollama
+插件依赖 `requests`、`Pillow`、`numpy`，通常 ComfyUI 已内置。
+若缺失，在 ComfyUI 环境中执行：
 
-1. 安装 Ollama（官网地址：https://ollama.com/）并确保服务正在运行（默认 http://127.0.0.1:11434）
-
-2. 拉取支持视觉的模型，例如：
-
-ollama pull llava:13b
-ollama pull bakllava
-
-2.2 安装插件
-
-1. 进入 ComfyUI 的 custom_nodes 目录：
-
-ComfyUI_windows_portable\ComfyUI\custom_nodes\
-
-1. 克隆本仓库或解压插件压缩包到该目录，确保文件夹名为 comfyui_llama_external。
-
-2. 重启 ComfyUI。
-
-2.3 安装 Python 依赖
-
-插件依赖 requests、Pillow、numpy，通常 ComfyUI 已内置。若缺失，可在 ComfyUI 的 Python 环境中执行：
-
+```bash
 .\python_embeded\python.exe -m pip install requests
+```
 
-对于便携版 ComfyUI，请使用其自带的 python_embeded 目录下的 Python 解释器。
+> 便携版请使用自带 `python_embeded` 目录下的解释器
 
-节点概览
-节点名称	功能描述
-自动加载外部LLM（模型文件夹）	指定文件夹，自动扫描 .gguf 模型并启动 llama-server。
-手动加载外部LLM	手动指定模型文件路径和 mmproj 文件路径启动服务。
-卸载/杀死外部LLM	停止指定端口或所有托管的 llama-server 进程。
-llama.cpp 写提示词	纯文本对话生成（非流式）。
-llama.cpp 图像反推提示词	上传图像，生成描述或绘画提示词（非流式）。
-Ollama 连接检查	验证 Ollama 服务状态及模型可用性。
-Ollama 写提示词	通过 Ollama 进行纯文本生成。
-Ollama 图像反推提示词	通过 Ollama 视觉模型生成图像描述。
-LLM 流式输出(UI版)	推荐：纯文本流式对话，实时显示 Markdown。
-LLM 图像反推(流式UI版)	推荐：上传图像，流式返回描述，支持 Markdown。
-LLM任务规划器	将自然语言需求拆解为 JSON 工作流步骤。
+---
 
+## 节点概览
 
-三、快速上手工作流
+| 节点名称 | 功能描述 |
+|---------|----------|
+| 自动加载外部LLM（模型文件夹） | 指定文件夹，自动扫描 .gguf 模型并启动 llama-server |
+| 手动加载外部LLM | 手动指定模型文件路径和 mmproj 文件路径启动服务 |
+| 卸载/杀死外部LLM | 停止指定端口或所有托管的 llama-server 进程 |
+| llama.cpp 写提示词 | 纯文本对话生成（非流式） |
+| llama.cpp 图像反推提示词 | 上传图像，生成描述或绘画提示词（非流式） |
+| Ollama 连接检查 | 验证 Ollama 服务状态及模型可用性 |
+| Ollama 写提示词 | 通过 Ollama 进行纯文本生成 |
+| Ollama 图像反推提示词 | 通过 Ollama 视觉模型生成图像描述 |
+| LLM 流式输出(UI版) | 推荐：纯文本流式对话，实时显示 Markdown |
+| LLM 图像反推(流式UI版) | 推荐：上传图像，流式返回描述，支持 Markdown |
+| LLM任务规划器 | 将自然语言需求拆解为 JSON 工作流步骤 |
 
-以下是一个典型的图像反推提示词工作流：
+---
 
-1. 加载图像 → 使用 Load Image 节点
+## 三、快速上手工作流
 
-2. 启动 llama.cpp 服务 → 使用 自动加载外部LLM（模型文件夹）节点
+典型图像反推提示词流程：
 
-3. 反推提示词 → 连接 本地图像反推提示词 (llama.cpp) 节点
+1. 加载图像 → 使用 `Load Image` 节点
+2. 启动 llama.cpp 服务 → 使用 `自动加载外部LLM（模型文件夹）` 节点
+3. 反推提示词 → 连接 `本地图像反推提示词 (llama.cpp)` 节点
+4. 生成图像 → 将输出提示词送入 `CLIP Text Encode` 等节点
 
-4. 生成图像 → 将输出的提示词送入 CLIP Text Encode 等节点
+示例工作流位于插件目录：
+`workflow_examples/example_basic.png`
 
-示例工作流：workflow_examples/example_basic.png（插件目录下的 workflow_examples 文件夹提供了可直接拖入 ComfyUI 的 JSON 工作流示例。）
+---
 
-四、🧩 节点详解
-一、 服务管理与启动
+## 🧩 节点详解
+
+### 一、服务管理与启动
 
 用于在 ComfyUI 内部一键启动或管理本地 LLM 推理服务。
 
-1. 自动加载外部LLM（模型文件夹） (LLMExternalServerAuto)
+#### 1. 自动加载外部LLM（模型文件夹）
+功能：传入包含 .gguf 模型的文件夹路径，自动识别模型与 mmproj，并启动服务。
 
-功能：传入一个包含 .gguf 模型的文件夹路径，自动识别模型和 mmproj（多模态投影层），并启动服务。
+**必填参数**
+- `model_folder`：模型所在文件夹路径
+- `port`：推理端口（默认 8080）
+- `gpu_layers`：GPU 加速层数（-1 为自动全显存）
 
-必填参数：
+**可选参数**
+- `exe_path`：llama-server.exe 绝对路径
+- `force_reload`：强制重启（更换模型时必勾）
 
-- model_folder：模型所在的文件夹路径。
+#### 2. 手动加载外部LLM
+通过完整路径启动服务，适合高级用户。
 
-- port：推理端口（默认 8080）。
+#### 3. 卸载/杀死外部LLM
+释放显存，可杀死指定端口或全部插件启动的进程。
 
-- gpu_layers：GPU 加速层数（-1 为自动全显存）。
+#### 4. Ollama 连接检查
+检查 Ollama 是否运行，验证模型是否已下载。
 
-可选参数：
+> 联动技巧：
+> 以上 4 个节点输出均为 `(api_url, model_name, timeout, max_tokens)`，
+> 可直接连线到下游对话节点，无需重复填写。
 
-- exe_path：llama-server.exe 的绝对路径（需根据你的实际安装位置修改）。
+---
 
-- force_reload：强制重启（更换模型时必勾）。
+## 📝 参数说明（通用）
 
-2. 手动加载外部LLM (LLMExternalServer)
+| 参数 | 类型 | 说明 |
+|-----|-----|------|
+| api_url | STRING | LLM 服务 API 地址，通常以 `/v1` 结尾 |
+| model_name | STRING | 模型名称（需与服务端一致） |
+| system_prompt / user_prompt | STRING | 系统指令与用户输入，支持多行 |
+| temperature | FLOAT | 生成随机性（0-2），越高越有创造性 |
+| max_tokens | INT | 最大生成 token 数 |
+| timeout | INT | API 请求超时时间（秒） |
+| stream | BOOLEAN | 是否启用流式输出（仅非 UI 节点） |
+| thinking_mode | 下拉选项 | 思考模式控制（默认/强制关闭/强制开启） |
 
-功能：通过精准的文件路径启动服务，适合高级玩家。
+---
 
-区别：需要手动指定 model_path 和 mmproj_path 的完整文件名。
+## 🚀 经典工作流搭建指南
 
-3. 卸载/杀死外部LLM (LLMExternalKiller)
+### 场景 A：最简 Ollama 文本生成
+1. 添加 `Ollama 连接检查`，使用默认地址和模型
+2. 添加 `本地LLM写提示词`，连线 4 个输出
+3. 填写 `user_prompt` 运行
 
-功能：释放显存。可杀死指定端口的进程，也可勾选 kill_all 一键清空所有由本插件启动的进程。
+### 场景 B：本地离线图生提示词
+1. 添加 `自动加载外部LLM`，填写 Qwen2-VL / LLaVA 路径
+2. 添加 `本地图像反推提示词`，连接图片
+3. 输出 STRING 连入 CLIP 用于生图
 
-4. Ollama 连接检查 (OllamaServer)
+### 场景 C：UI 流式打字效果
+1. 添加 `Ollama 连接检查`
+2. 添加 `LLM 流式输出(UI版)`
+3. 输入长文本需求，运行即可看到实时打字效果
 
-功能：检查 Ollama 是否运行，验证指定的模型是否已下载。
+---
 
-注意：api_url 填写原始地址（如 http://127.0.0.1:11434），节点会自动补全 /v1。
+## 🔧 常见问题排查 (FAQ)
 
-联动技巧：以上 4 个节点的输出均为 (api_url, model_name, timeout, max_tokens)。直接将这四个输出口连到下游对话节点对应的输入口，无需重复填写地址和模型名！
+### Q1: 报错 找不到 llama-server 可执行文件
+A: 在 `自动加载外部LLM` 节点中，将 `exe_path` 改为你电脑上真实路径。
 
-📝 参数说明（通用）
-参数	类型	说明
-api_url	STRING	LLM 服务的 API 地址，通常以 /v1 结尾。
-model_name	STRING	模型名称（需与服务端一致）。
-system_prompt / user_prompt	STRING	系统指令和用户输入，支持多行。
-temperature	FLOAT	生成随机性（0-2），越高越有创造性。
-max_tokens	INT	最大生成 token 数。
-timeout	INT	API 请求超时时间（秒）。
-stream	BOOLEAN	是否启用流式输出（仅非 UI 版节点）。
-thinking_mode	下拉选项	控制模型思考模式（跟随默认/强制关闭/强制开启）。
+### Q2: 端口 8080 已被占用
+A: 勾选 `force_reload` 强制重启，或使用 `卸载/杀死外部LLM`，或更换端口（如 8081）。
 
-二、 文本对话与生成
+### Q3: 流式输出乱码、重复两遍
+A: 更新到最新版 `common.py`，已彻底修复 UTF-8 解码问题。
 
-接收文本提示词，输出 LLM 生成的结果。
+### Q4: 节点框里没有打字机效果？
+A:
+1. 确认 `__init__.py` 中有 `WEB_DIRECTORY = "./web"`
+2. 确认 `web/llm_stream.js` 存在
+3. 浏览器强制刷新缓存：Ctrl+Shift+Delete
+4. F12 查看控制台是否有 JS 加载错误
 
-1. 本地LLM写提示词 (LLMExternalTextChat / OllamaTextChat)
+### Q5: Ollama 报错模型未找到
+A: 先在命令行执行 `ollama pull 模型名` 下载。
 
-功能：纯文本对话。适合让 LLM 扮演“提示词工程师”编写 Midjourney/SD 提示词。
+### Q6: 图像反推全是废话
+A: 把提示词换成专业指令，例如：
+```
+你是一个专业 Stable Diffusion 提示词工程师。仔细观察图片，提取主体、环境、光影、画风，输出一段英文提示词。格式：主体,背景,光影,风格,画质。只输出提示词。
+```
 
-参数：system_prompt（设定角色）、user_prompt（具体需求）、temperature（创意度，0.1-2.0）。
+---
 
-输出：(STRING) 生成的文本。
+## 🔧 高级技巧
 
-2. 🔥 LLM 流式输出(UI版) (LLMStreamUI) 【明星节点】
+- **多轮对话**：将历史消息拼接到 `user_prompt`
+- **性能调优**：llama.cpp 调整 `gpu_layers=-1`，Ollama 修改 Modelfile
+- **工作流联动**：LLM 输出直接连 CLIP Text Encode，全自动出图
 
-功能：在节点内部提供一个 200px 高的文本框，实时显示 LLM 生成的每一个字。
+---
 
-适用场景：长文生成、写代码、写诗，需要实时观察模型输出以防跑偏时使用。
+## 📄 许可证
+本项目采用 MIT License 开源。
 
-注意：虽然界面上看起来是在“节点内显示”，但它依然有一个 final_text 输出口，可以继续连给下游节点（如保存为 txt）。
+## 🙏 致谢
+- ComfyUI
+- Ollama
+- llama.cpp
 
-三、 图像理解与反推
+---
 
-输入 ComfyUI 的图像张量（IMAGE），输出对图像的描述或可用于重绘的提示词。
-
-本地图像反推提示词 (LLMExternalImageToPrompt / OllamaImageToPrompt)
-
-功能：图生文。喂给它一张图，它还你一段高质量的 Prompt。
-
-必填：image（接入任意图像节点）、prompt（对图像的指令，如“请用中文详细描述并提取提示词”）。
-
-模型要求：必须使用多模态模型（如 Ollama 的 llava，或 llama.cpp 加载了 mmproj 的模型）。
-
-四、 智能体任务规划
-
-LLM任务规划器 (LLMAgentPlanner)
-
-功能：输入一句模糊的需求（如“帮我做个赛博朋克风格的小猫视频”），LLM 会输出结构化的 JSON 数组，拆解为具体步骤。
-
-输出：
-
-- plan_json：纯 JSON 字符串，可供后续代码节点解析执行。
-
-- plan_text：原始文本备份。
-
-🚀 经典工作流搭建指南
-
-场景 A：最简 Ollama 文本生成 (0 配置)
-
-1. 添加 Ollama 连接检查，填入默认地址和模型名（如 llama3）。
-
-2. 添加 本地LLM写提示词，将上一个节点的 4 个输出口直接连线到这个节点的对应输入口。
-
-3. 在 user_prompt 输入你的需求，运行。
-
-场景 B：本地离线图生提示词 (Llama.cpp)
-
-1. 添加 自动加载外部LLM，填入 Qwen2-VL 或 LLaVA 的模型文件夹路径，修改 exe_path。
-
-2. 添加 本地图像反推提示词，连好服务节点，接入一张图片，运行。
-
-3. 将输出的 STRING 连入 CLIP Text Encode，直接用于生图。
-
-场景 C：体验 UI 流式打字效果
-
-1. 添加 Ollama 连接检查。
-
-2. 添加 LLM 流式输出(UI版)。
-
-3. 连线。输入一个需要长篇大论的问题（如“写一篇800字的科幻小说开头”）。
-
-4. 点击运行，盯着节点框看效果。
-
-🔧 常见问题排查 (FAQ)
-
-Q1: 报错 找不到 llama-server 可执行文件
-
-A: 打开 自动加载外部LLM 节点，将 exe_path 修改为你电脑上 llama-server.exe 的真实绝对路径。
-
-Q2: 报错 端口 8080 已被模型 'xxx' 占用，与期望的 'yyy' 不一致
-
-A: 你正在尝试加载一个新模型，但 8080 端口还在跑旧模型。解决方法：勾选 force_reload 强制重启，或者先连一个 卸载/杀死外部LLM 节点清空端口，也可以换一个端口（如 8081）。
-
-Q3: 流式输出节点控制台出现乱码（如 è¿™æ˜¯），且每个字重复两遍
-
-A: 你使用的是旧版本代码。请更新至最新版 common.py，新版已彻底修复 UTF-8 解码错位与双重打印问题。
-
-Q4: 使用了 LLM 流式输出(UI版)，但节点框里没有实时打字效果？
-
-A: 请按顺序检查：
-
-1. 确认 __init__.py 中包含 WEB_DIRECTORY = "./web"。
-
-2. 确认 web/llm_stream.js 文件存在且路径正确。
-
-3. 清除浏览器缓存（Ctrl+Shift+Delete），或使用无痕模式打开 ComfyUI。
-
-4. 按 F12 打开控制台，查看是否有 JS 加载报错。
-
-Q5: Ollama 报错 模型 'xxx' 未找到
-
-A: 请先打开系统终端/命令行，运行 ollama pull xxx 下载模型后重试。
-
-Q6: 图像反推节点输出的全是废话，没有提示词？
-
-A: 这是 Prompt（指令）写得太模糊。建议将节点里的 prompt 修改为更具体的指令，例如：
-
-"你是一个专业的 Stable Diffusion 提示词工程师。请仔细观察这张图片，提取其中的主体、环境、光影、画风，并输出一段英文提示词，格式为：主体描述, 环境背景, 光影效果, 艺术风格, 画质词。只输出提示词，不要解释。"
-
-*Made with ❤️ for ComfyUI Community*
-
-注意：文档中涉及的 Ollama 默认地址 http://127.0.0.1:11434，若出现“URL拼写可能存在错误，请检查”报错，需确认 Ollama 服务已正常启动，且该端口未被其他程序占用。
-
-🔧 高级技巧
-多轮对话
-当前节点为单次生成设计。如需多轮对话，可将历史消息手动拼接至 user_prompt，或等待后续版本推出 LLMChatHistory 节点。
-
-性能调优
-llama.cpp：调整 gpu_layers（-1 为全部）和 ctx_size（4096 足够大多数场景）。
-
-Ollama：在 Modelfile 中设置 num_gpu 和 num_thread。
-
-与其他节点联动
-将 LLM 写提示词 的输出连接到 CLIP Text Encode，实现提示词自动生成并送入 Stable Diffusion。
-
-使用 LLM任务规划器 生成 JSON 计划，再通过自定义脚本执行多步工作流。
-
-📄 许可证
-本项目采用 MIT License 开源，欢迎贡献代码或提交 Issue。
-
-🙏 致谢
-ComfyUI - 强大的节点式界面。
-
-Ollama - 简单易用的本地模型运行工具。
-
-llama.cpp - 高性能 CPU/GPU 推理。
-
-现在，开始用自然语言驱动你的 ComfyUI 创作吧！ 🎨✨
-
-
+**用自然语言驱动你的 ComfyUI 创作吧！🎨✨**
+```
