@@ -7,11 +7,11 @@
 
 ## 核心特性
 
-- 🚀 **流式输出（UI 版）**：实时打字机效果，支持 Markdown 渲染，体验媲美 ChatGPT
-- 🖼️ **多模态支持**：支持 LLaVA、Qwen2-VL 等视觉模型，实现图像反推提示词
-- 🧠 **思考模式控制**：针对 DeepSeek、Qwen、GLM 等模型，可强制开启/关闭推理思考过程
-- 🔧 **服务自动管理**：自动启动/复用 llama-server 进程，支持显存优化
-- 🛡️ **健壮错误处理**：友好的中文错误提示，降低调试门槛
+-  **流式输出（UI 版）**：实时打字机效果，支持 Markdown 渲染，体验媲美 ChatGPT
+-  **多模态支持**：支持 LLaVA、Qwen2-VL 等视觉模型，实现图像反推提示词
+-  **思考模式控制**：针对 DeepSeek、Qwen、GLM 等模型，可强制开启/关闭推理思考过程
+-  **服务自动管理**：自动启动/复用 llama-server 进程，支持显存优化
+-  **健壮错误处理**：友好的中文错误提示，降低调试门槛
 
 ![Workflow Example](https://raw.githubusercontent.com/fan200617120-ui/comfyui_llama_external/main/workflow_examples/llama_image_to_prompt_basic.png)
 
@@ -247,6 +247,11 @@ A: 把提示词换成专业指令，例如：
 - **多轮对话**：将历史消息拼接到 `user_prompt`
 - **性能调优**：llama.cpp 调整 `gpu_layers=-1`，Ollama 修改 Modelfile
 - **工作流联动**：LLM 输出直接连 CLIP Text Encode，全自动出图
+- 它本质上是一个「转接环」，而不是一个固定插座
+它的核心，是打通「大语言模型」和「本地工具生态」的通用通道：
+今天，它是 ComfyUI 里的一个节点，让 LLM 可以直接反推提示词、规划工作流；
+明天，它可以无缝接入你自己写的 WebUI，让同一个模型继续聊天、处理文本；
+后天，它还能接任何兼容 OpenAI API 的后端（Ollama /llama.cpp/ LM Studio），不用改一行核心代码。
 
 ---
 
