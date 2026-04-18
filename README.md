@@ -1,8 +1,3 @@
-我直接**把你这段内容，改成 GitHub 100% 不会乱的标准 Markdown**，你复制粘贴覆盖掉原来的 README.md 就行，一步到位，不用再调。
-
-# 👇 下面这整块，直接全选复制 → 粘贴到你的 README.md 里
-
-```markdown
 # 📖 LLM_External ComfyUI 插件使用手册
 
 **ComfyUI LLM External** 是一个为 ComfyUI 提供本地大语言模型（LLM）和视觉多模态模型集成的自定义节点包。
@@ -74,7 +69,7 @@ ComfyUI/custom_nodes/
    例如：`llama-b8784-bin-win-cuda-12.4-x64.zip`
 2. 解压到本地目录，例如：
    ```
-   F:\AItools\LLM\llama\
+    D:\AItools\LLM\llama\
    ```
 3. 准备至少一个 GGUF 格式大模型文件（从 HuggingFace 等渠道下载）
 
@@ -266,4 +261,3 @@ A: 把提示词换成专业指令，例如：
 ---
 
 **用自然语言驱动你的 ComfyUI 创作吧！🎨✨**
-```
