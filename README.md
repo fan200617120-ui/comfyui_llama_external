@@ -226,8 +226,8 @@ A: 更新到最新版 `common.py`，已彻底修复 UTF-8 解码问题。
 
 ### Q4: 节点框里没有打字机效果？
 A:
-1. 确认 `__init__.py` 中有 `WEB_DIRECTORY = "./web"`
-2. 确认 `web/llm_stream.js` 存在
+1. 确认 `__init__.py` 中有 `WEB_DIRECTORY = "./js"`
+2. 确认 `js/llm_stream.js` 存在
 3. 浏览器强制刷新缓存：Ctrl+Shift+Delete
 4. F12 查看控制台是否有 JS 加载错误
 
