@@ -54,7 +54,6 @@ ComfyUI/custom_nodes/
 ├── server_manager.py
 ├── llama_nodes.py
 ├── ollama_nodes.py
-├── agent_node.py
 ├── stream_ui_node.py
 └── js/llm_stream.js
 ```
@@ -128,7 +127,7 @@ ComfyUI/custom_nodes/
 | Ollama 图像反推提示词 | 通过 Ollama 视觉模型生成图像描述 |
 | LLM 流式输出(UI版) | 推荐：纯文本流式对话，实时显示 Markdown |
 | LLM 图像反推(流式UI版) | 推荐：上传图像，流式返回描述，支持 Markdown |
-| LLM任务规划器 | 将自然语言需求拆解为 JSON 工作流步骤 |
+
 
 ---
 
