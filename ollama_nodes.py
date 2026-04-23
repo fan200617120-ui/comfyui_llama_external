@@ -1,3 +1,4 @@
+# ollama_nodes.py (20260423)
 import requests
 from .common import (
     encode_image,
@@ -26,10 +27,12 @@ class OllamaServer:
     CATEGORY = "LLM_External"
 
     def check(self, api_url, model_name, timeout, max_tokens):
+        # 修复：去除所有尾部斜杠，避免 // 出现
         base_url = api_url.rstrip('/')
         if base_url.endswith('/v1'):
-            base_url = base_url[:-3]
-        tags_url = f"{base_url}/api/tags"
+            base_url = base_url[:-3].rstrip('/')  # 去除 /v1 后再去斜杠
+        tags_url = f"{base_url}/api/tags"         # 确保最终 url 中无 //
+
         try:
             session = get_session(base_url)
             r = session.get(tags_url, timeout=5)

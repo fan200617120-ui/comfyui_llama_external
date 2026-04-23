@@ -1,3 +1,4 @@
+# common.py (20260423)
 import base64
 from io import BytesIO
 from PIL import Image
@@ -9,6 +10,7 @@ import atexit
 import sys
 import os
 import json
+import threading
 
 # === 强制设置 Windows 控制台为 UTF-8 ===
 if sys.platform == "win32":
@@ -19,12 +21,22 @@ if sys.platform == "win32":
     except:
         pass
 
-# ------------------- 全局 Session 管理 -------------------
-_session_cache = {}
+# ------------------- 线程安全全局 Session 管理 -------------------
+# 每个线程独立一个 session 字典，避免 requests.Session 非线程安全导致崩溃
+_local = threading.local()
+_all_thread_sessions = []  # 用于清理时遍历所有线程的 session
+_lock = threading.Lock()
 
 def get_session(base_url, timeout=30):
-    """获取带重试机制的 requests Session"""
-    if base_url not in _session_cache:
+    """获取当前线程的带重试机制的 requests Session（线程安全）"""
+    # 初始化当前线程的 session 字典
+    if not hasattr(_local, 'sessions'):
+        _local.sessions = {}
+        with _lock:
+            _all_thread_sessions.append(_local.sessions)
+
+    sessions = _local.sessions
+    if base_url not in sessions:
         session = requests.Session()
         retry = Retry(
             total=2,
@@ -34,17 +46,20 @@ def get_session(base_url, timeout=30):
         adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=10)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
-        _session_cache[base_url] = session
-    return _session_cache[base_url]
+        sessions[base_url] = session
+    return sessions[base_url]
 
 def clear_sessions():
-    """程序退出时关闭所有 session"""
-    for url, session in list(_session_cache.items()):
-        try:
-            session.close()
-        except:
-            pass
-    _session_cache.clear()
+    """程序退出时关闭所有线程的所有 session"""
+    with _lock:
+        for sessions in _all_thread_sessions:
+            for url, session in list(sessions.items()):
+                try:
+                    session.close()
+                except:
+                    pass
+            sessions.clear()
+        _all_thread_sessions.clear()
 
 atexit.register(clear_sessions)
 

@@ -1,6 +1,8 @@
+# llama_nodes.py (20260423)
 import os
 import glob
 import requests
+from urllib.parse import urlparse
 from .common import (
     encode_image,
     get_session,
@@ -10,6 +12,14 @@ from .common import (
     execute_non_stream_chat
 )
 from .server_manager import start_llama_server, kill_server
+
+def _is_valid_api_url(url):
+    """检查是否为可请求的 HTTP(S) URL（用于判断 LLM 服务是否准备好）"""
+    if not url or not isinstance(url, str):
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https")
+
 
 def find_model_files(folder_path):
     """在文件夹中查找 .gguf 模型和可选的 mmproj 文件"""
@@ -164,8 +174,9 @@ class LLMExternalImageToPrompt:
     CATEGORY = "LLM_External"
 
     def generate(self, api_url, model_name, image, prompt, temperature, timeout, max_tokens, stream, thinking_mode):
-        if api_url.startswith("ERROR") or api_url.startswith("错误"):
-            return (api_url,)
+        # 健壮的 URL 检查
+        if not _is_valid_api_url(api_url):
+            return (f"错误：无效的 API 地址 '{api_url}'，请确保 LLM 服务已启动。",)
 
         image_b64 = encode_image(image, format="PNG")
         payload = {
@@ -228,8 +239,9 @@ class LLMExternalTextChat:
     CATEGORY = "LLM_External"
 
     def generate(self, api_url, model_name, system_prompt, user_prompt, temperature, timeout, max_tokens, stream, thinking_mode):
-        if api_url.startswith("ERROR") or api_url.startswith("错误"):
-            return (api_url,)
+        # 健壮的 URL 检查
+        if not _is_valid_api_url(api_url):
+            return (f"错误：无效的 API 地址 '{api_url}'，请确保 LLM 服务已启动。",)
 
         payload = {
             "model": model_name,

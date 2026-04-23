@@ -1,3 +1,4 @@
+# __init__.py 
 # 核心节点（必须存在）
 try:
     from .llama_nodes import (
@@ -7,7 +8,6 @@ try:
         LLMExternalImageToPrompt,
         LLMExternalTextChat
     )
-    from .agent_node import LLMAgentPlanner
 except ImportError as e:
     print(f"[LLM External] 核心节点导入失败: {e}")
     raise
@@ -22,7 +22,6 @@ CORE_NODES = {
     "LLMExternalKiller": LLMExternalKiller,
     "LLMExternalImageToPrompt": LLMExternalImageToPrompt,
     "LLMExternalTextChat": LLMExternalTextChat,
-    "LLMAgentPlanner": LLMAgentPlanner,
 }
 
 CORE_DISPLAY_NAMES = {
@@ -31,7 +30,6 @@ CORE_DISPLAY_NAMES = {
     "LLMExternalKiller": "卸载/杀死外部LLM",
     "LLMExternalImageToPrompt": "llama.cpp 图像反推提示词",
     "LLMExternalTextChat": "llama.cpp 写提示词",
-    "LLMAgentPlanner": "LLM任务规划器",
 }
 
 NODE_CLASS_MAPPINGS.update(CORE_NODES)

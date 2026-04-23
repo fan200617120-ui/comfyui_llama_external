@@ -1,3 +1,4 @@
+# server_manager.py (20260423)
 import subprocess
 import time
 import requests
@@ -75,6 +76,7 @@ def kill_server(api_url=None, kill_all=False):
         if kill_all:
             to_delete = []
             for url, proc in list(ACTIVE_SERVERS.items()):
+                # 只处理由本插件直接管理的 Popen 对象
                 if proc and isinstance(proc, subprocess.Popen):
                     try:
                         proc.terminate()
@@ -92,6 +94,7 @@ def kill_server(api_url=None, kill_all=False):
             return "已杀死所有外部 LLM 进程"
         elif api_url and api_url in ACTIVE_SERVERS:
             proc = ACTIVE_SERVERS[api_url]
+            # 安全检查：跳过非进程对象（如之前可能遗留的字符串）
             if proc and isinstance(proc, subprocess.Popen):
                 try:
                     proc.terminate()
@@ -147,8 +150,7 @@ def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_
     if running_model is not None:
         if running_model.lower() == expected_model_name.lower():
             print(f"[LLM External] 端口 {port} 已有模型 {running_model} 在运行，直接复用。")
-            with SERVER_LOCK:
-                ACTIVE_SERVERS[api_url] = "external"
+            # 外部已存在的服务不纳入本插件管理（不再插入 ACTIVE_SERVERS）
             return api_url, running_model, None
         else:
             return None, None, f"错误：端口 {port} 已被模型 '{running_model}' 占用，与期望的 '{expected_model_name}' 不一致。\n解决方法：更换端口，或先杀死旧进程。"
@@ -199,6 +201,7 @@ def start_llama_server(exe_path, model_path, mmproj_path, port, gpu_layers, ctx_
                 if actual_model is None:
                     actual_model = expected_model_name
                 print(f"[LLM External] 模型加载完成！实际模型名: {actual_model}")
+                # 线程安全地记录托管进程
                 with SERVER_LOCK:
                     ACTIVE_SERVERS[api_url] = process
                 return api_url, actual_model, None

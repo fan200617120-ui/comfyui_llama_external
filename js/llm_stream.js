@@ -1,3 +1,4 @@
+// llm_stream.js (20260423)
 import { app } from "../../scripts/app.js";
 
 // ============================================
@@ -15,12 +16,24 @@ function markdownToHtml(text) {
             .replace(/'/g, "&#39;");
     };
 
+    // 【修复XSS】解码后检测危险协议，并仅放行安全协议
     const safeUrl = (url) => {
-        const decoded = url.replace(/&amp;/g, '&');
-        if (/^\s*(javascript|data|vbscript):/i.test(decoded)) {
+        try {
+            const decoded = decodeURIComponent(url);
+            // 禁止任何脚本或数据协议
+            if (/^\s*(javascript|data|vbscript):/i.test(decoded)) {
+                return "#";
+            }
+        } catch(e) {
+            // 解码失败视为不安全
             return "#";
         }
-        return url;
+        // 允许 http, https, mailto, 以及无协议路径（/开头）或锚点
+        if (/^\s*(https?:\/\/|mailto:|\/|#)/i.test(url)) {
+            return url;
+        }
+        // 其他协议一律屏蔽
+        return "#";
     };
 
     const parseInlineMarkdown = (str) => {
@@ -30,8 +43,8 @@ function markdownToHtml(text) {
             .replace(/\*([^\*]+?)\*/g, '<em>$1</em>')
             .replace(/_([^_]+?)_/g, '<em>$1</em>')
             .replace(/`([^`]+?)`/g, '<code>$1</code>')
-            .replace(/\[(.*?)\]\((.*?)\)/g, (_, t, u) => 
-                `<a href="${safeUrl(u)}" target="_blank" rel="noopener">${escapeHtml(t)}</a>`);
+            .replace(/\[(.*?)\]\((.*?)\)/g, (_, text, url) => 
+                `<a href="${safeUrl(url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`);
     };
 
     let html = escapeHtml(text).replace(/\r\n/g, '\n');
@@ -104,7 +117,6 @@ app.registerExtension({
     name: "LLM.StreamUI.Pro",
     
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        // 精确匹配支持的节点名称（已清理所有空格）
         const SUPPORTED_NODES = ["LLMStreamUI", "LLMStreamImageToPrompt"];
         if (!SUPPORTED_NODES.includes(nodeData.name)) return;
 

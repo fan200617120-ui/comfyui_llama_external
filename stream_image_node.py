@@ -1,5 +1,7 @@
+# stream_image_node.py (20260423)
 import json
 import time
+from urllib.parse import urlparse
 from server import PromptServer
 from .common import (
     encode_image,
@@ -8,6 +10,14 @@ from .common import (
     friendly_error,
     apply_thinking_mode
 )
+
+def _is_valid_api_url(url):
+    """检查是否为可请求的 HTTP(S) URL"""
+    if not url or not isinstance(url, str):
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https")
+
 
 class LLMStreamImageToPrompt:
     """
@@ -49,13 +59,15 @@ class LLMStreamImageToPrompt:
     def generate_stream(self, api_url, model_name, image, prompt,
                         temperature, timeout, max_tokens, thinking_mode, unique_id):
         api_url = normalize_api_url(api_url)
-        if api_url.startswith("ERROR") or api_url.startswith("错误"):
+        # 替换不可靠的 startswith 检查
+        if not _is_valid_api_url(api_url):
+            err_msg = f"错误：无效的 API 地址 '{api_url}'，请确保 LLM 服务已启动。"
             if unique_id:
                 PromptServer.instance.send_sync(
                     "llm_stream_update",
-                    {"node_id": str(unique_id), "delta": api_url}
+                    {"node_id": str(unique_id), "delta": err_msg}
                 )
-            return (api_url,)
+            return (err_msg,)
 
         # 编码图像为 base64
         image_b64 = encode_image(image, format="PNG")
@@ -116,7 +128,7 @@ class LLMStreamImageToPrompt:
                                 continue
                             obj = json.loads(data)
                             delta = obj.get("choices", [{}])[0].get("delta", {})
-                            # 修复：兼容 reasoning_content 流式输出
+                            # 兼容 reasoning_content 流式输出
                             current_delta = delta.get("content") or delta.get("reasoning_content")
                             if not current_delta:
                                 continue
@@ -137,6 +149,10 @@ class LLMStreamImageToPrompt:
 
                         except json.JSONDecodeError:
                             continue
+
+                    # 内层 while 后检查 done，跳出外层 for
+                    if done_flag:
+                        break
 
                 # 推送最后剩余部分
                 if pending_delta_parts and unique_id:
