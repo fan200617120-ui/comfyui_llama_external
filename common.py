@@ -153,26 +153,18 @@ def get_actual_model_name(port):
 
 # ------------------- LLM 模型文件扫描（支持不区分大小写 & 递归子文件夹） -------------------
 def get_llm_folder():
-    """
-    获取 ComfyUI 的 LLM 模型文件夹路径，支持大小写不敏感（优先 LLM，其次 llm）。
-    如果找到，会将其注册到 folder_paths 中（键名为 "LLM"），以便后续使用。
-    """
     try:
-        # 尝试标准大写 LLM
         llm_dir = os.path.join(folder_paths.models_dir, "LLM")
         if os.path.isdir(llm_dir):
             if "LLM" not in folder_paths.folder_names_and_paths:
                 folder_paths.folder_names_and_paths["LLM"] = ([llm_dir], set())
             return llm_dir
 
-        # 尝试小写 llm
         llm_dir_lower = os.path.join(folder_paths.models_dir, "llm")
         if os.path.isdir(llm_dir_lower):
-            # 注册为 "LLM" 以便统一使用
             if "LLM" not in folder_paths.folder_names_and_paths:
                 folder_paths.folder_names_and_paths["LLM"] = ([llm_dir_lower], set())
             else:
-                # 如果已存在但路径不同，追加
                 paths, exts = folder_paths.folder_names_and_paths["LLM"]
                 if llm_dir_lower not in paths:
                     paths.append(llm_dir_lower)
@@ -183,10 +175,6 @@ def get_llm_folder():
         return None
 
 def _scan_gguf_files(folder, include_mmproj=False):
-    """
-    递归扫描 folder 下的所有 .gguf 文件，返回相对路径列表。
-    include_mmproj: True 返回 mmproj 文件，False 返回非 mmproj 文件。
-    """
     if not folder or not os.path.isdir(folder):
         return []
     results = []
@@ -198,18 +186,15 @@ def _scan_gguf_files(folder, include_mmproj=False):
             is_mmproj = 'mmproj' in lower
             if include_mmproj == is_mmproj:
                 rel = os.path.relpath(os.path.join(root, f), folder)
-                # 使用正斜杠统一路径分隔符（Windows 兼容）
                 rel = rel.replace('\\', '/')
                 results.append(rel)
     return sorted(results)
 
 def get_gguf_files():
-    """返回 LLM 文件夹（包括所有子目录）中的非 mmproj .gguf 文件（相对路径）"""
     folder = get_llm_folder()
     return _scan_gguf_files(folder, include_mmproj=False)
 
 def get_mmproj_files():
-    """返回 LLM 文件夹（包括所有子目录）中的 mmproj .gguf 文件（相对路径）"""
     folder = get_llm_folder()
     return _scan_gguf_files(folder, include_mmproj=True)
 
@@ -233,6 +218,71 @@ def apply_thinking_mode(payload: dict, model_name: str, thinking_mode: str, reas
 
     if reasoning_effort and reasoning_effort != "无" and ("qwen" in model_lower or "qwq" in model_lower):
         payload["reasoning_effort"] = reasoning_effort
+
+# ------------------- 统一采样参数注入（新增） -------------------
+def apply_sampling_params(payload: dict, **kwargs):
+    """
+    统一注入高级采样参数到 payload。
+    支持 min_p, dynatemp_range, dynatemp_exponent, xtc_probability, xtc_threshold,
+    repeat_penalty, dry_multiplier, dry_base, dry_allowed_length,
+    mirostat, mirostat_tau, mirostat_eta, typical_p, grammar, json_schema。
+    """
+    # min_p
+    val = kwargs.get('min_p')
+    if val is not None and val > 0.0:
+        payload['min_p'] = val
+    
+    # dynatemp
+    val = kwargs.get('dynatemp_range')
+    if val is not None and val > 0.0:
+        payload['dynatemp_range'] = val
+        payload['dynatemp_exponent'] = kwargs.get('dynatemp_exponent', 1.0)
+    
+    # xtc
+    val = kwargs.get('xtc_probability')
+    if val is not None and val > 0.0:
+        payload['xtc_probability'] = val
+        payload['xtc_threshold'] = kwargs.get('xtc_threshold', 0.1)
+    
+    # repeat_penalty
+    val = kwargs.get('repeat_penalty')
+    if val is not None and val != 1.0:
+        payload['repeat_penalty'] = val
+    
+    # dry
+    val = kwargs.get('dry_multiplier')
+    if val is not None and val > 0.0:
+        payload['dry_multiplier'] = val
+        payload['dry_base'] = kwargs.get('dry_base', 1.75)
+        payload['dry_allowed_length'] = kwargs.get('dry_allowed_length', 2)
+    
+    # mirostat
+    val = kwargs.get('mirostat')
+    if val is not None and val > 0:
+        payload['mirostat'] = val
+        payload['mirostat_tau'] = kwargs.get('mirostat_tau', 5.0)
+        payload['mirostat_eta'] = kwargs.get('mirostat_eta', 0.1)
+    
+    # typical_p
+    val = kwargs.get('typical_p')
+    if val is not None and val < 1.0:
+        payload['typical_p'] = val
+    
+    # grammar
+    val = kwargs.get('grammar')
+    if val and isinstance(val, str) and val.strip():
+        payload['grammar'] = val.strip()
+    
+    # json_schema（优先于 grammar）
+    val = kwargs.get('json_schema')
+    if val and isinstance(val, str) and val.strip():
+        try:
+            schema = json.loads(val)
+            payload['response_format'] = {"type": "json_schema", "json_schema": schema}
+        except json.JSONDecodeError:
+            # 降级：如果解析失败，尝试作为 grammar 使用
+            if 'grammar' not in payload:
+                payload['grammar'] = val.strip()
 
 # ------------------- 统一非流式请求执行 -------------------
 def execute_non_stream_chat(api_url, payload, timeout):
