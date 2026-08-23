@@ -1,5 +1,5 @@
-# __init__.py 
 # 核心节点（必须存在）
+# 修复 #14：拆分 try 块，避免 agent_node 拖垮核心节点
 try:
     from .llama_nodes import (
         LLMExternalServerAuto,
@@ -8,9 +8,21 @@ try:
         LLMExternalImageToPrompt,
         LLMExternalTextChat
     )
+    CORE_LOADED = True
 except ImportError as e:
     print(f"[LLM External] 核心节点导入失败: {e}")
+    CORE_LOADED = False
     raise
+
+try:
+    from .agent_node import LLMAgentPlanner
+    AGENT_LOADED = True
+except ImportError as e:
+    print(f"[LLM External] Agent节点导入失败（可选）: {e}")
+    AGENT_LOADED = False
+except Exception as e:
+    print(f"[LLM External] Agent节点注册失败: {e}")
+    AGENT_LOADED = False
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -35,7 +47,12 @@ CORE_DISPLAY_NAMES = {
 NODE_CLASS_MAPPINGS.update(CORE_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(CORE_DISPLAY_NAMES)
 
-# 2. 可选：Ollama 节点（安全导入）
+# 2. 注册 Agent 节点（如果加载成功）
+if AGENT_LOADED:
+    NODE_CLASS_MAPPINGS["LLMAgentPlanner"] = LLMAgentPlanner
+    NODE_DISPLAY_NAME_MAPPINGS["LLMAgentPlanner"] = "LLM任务规划器"
+
+# 3. 可选：Ollama 节点（安全导入）
 try:
     from .ollama_nodes import OllamaServer, OllamaImageToPrompt, OllamaTextChat
     OLLAMA_NODES = {
@@ -56,7 +73,7 @@ except ImportError as e:
 except Exception as e:
     print(f"[LLM External] Ollama 节点注册失败: {e}")
 
-# 3. 可选：流式 UI 节点（安全导入）
+# 4. 可选：流式 UI 节点（安全导入）
 try:
     from .stream_ui_node import LLMStreamUI
     NODE_CLASS_MAPPINGS["LLMStreamUI"] = LLMStreamUI
@@ -67,7 +84,7 @@ except ImportError as e:
 except Exception as e:
     print(f"[LLM External] 流式UI节点注册失败: {e}")
 
-# 4. 可选：多模态流式 UI 节点（安全导入）
+# 5. 可选：多模态流式 UI 节点（安全导入）
 try:
     from .stream_image_node import LLMStreamImageToPrompt
     NODE_CLASS_MAPPINGS["LLMStreamImageToPrompt"] = LLMStreamImageToPrompt

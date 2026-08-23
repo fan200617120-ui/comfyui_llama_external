@@ -1,4 +1,6 @@
-// llm_stream.js (20260423)
+// llm_stream.js (20260423) 修复版
+// 修复问题：#1、#9、#10、#11
+
 import { app } from "../../scripts/app.js";
 
 // ============================================
@@ -16,23 +18,19 @@ function markdownToHtml(text) {
             .replace(/'/g, "&#39;");
     };
 
-    // 【修复XSS】解码后检测危险协议，并仅放行安全协议
     const safeUrl = (url) => {
         try {
             const decoded = decodeURIComponent(url);
-            // 禁止任何脚本或数据协议
             if (/^\s*(javascript|data|vbscript):/i.test(decoded)) {
                 return "#";
             }
         } catch(e) {
-            // 解码失败视为不安全
             return "#";
         }
-        // 允许 http, https, mailto, 以及无协议路径（/开头）或锚点
+        // 修复 #11：允许 http, https, mailto, 以及无协议路径
         if (/^\s*(https?:\/\/|mailto:|\/|#)/i.test(url)) {
             return url;
         }
-        // 其他协议一律屏蔽
         return "#";
     };
 
@@ -43,12 +41,14 @@ function markdownToHtml(text) {
             .replace(/\*([^\*]+?)\*/g, '<em>$1</em>')
             .replace(/_([^_]+?)_/g, '<em>$1</em>')
             .replace(/`([^`]+?)`/g, '<code>$1</code>')
+            // 修复 #11：链接文本已经是安全的，不再二次转义
             .replace(/\[(.*?)\]\((.*?)\)/g, (_, text, url) => 
-                `<a href="${safeUrl(url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`);
+                `<a href="${safeUrl(url)}" target="_blank" rel="noopener">${text}</a>`);
     };
 
     let html = escapeHtml(text).replace(/\r\n/g, '\n');
 
+    // 代码块
     const codeBlocks = [];
     let blockIndex = 0;
     html = html.replace(/```(?:[ \t]*([a-zA-Z0-9_\-\+]+)\n)?([\s\S]*?)```/g, (_, lang, code) => {
@@ -102,7 +102,6 @@ function markdownToHtml(text) {
         html = html.replace(`%%CODEBLOCK${i}%%`, `<pre><code>${codeBlocks[i]}</code></pre>`);
     }
 
-    // 清理块级元素周围多余的 <br>
     html = html.replace(/(?:<br>\s*)+(<\/?(?:h[1-6]|ul|ol|li|pre)[^>]*>)/gi, '$1');
     html = html.replace(/(<\/?(?:h[1-6]|ul|ol|li|pre)[^>]*>)(?:\s*<br>)+/gi, '$1');
     html = html.replace(/(?:<br>\s*)+$/g, '');
@@ -111,7 +110,7 @@ function markdownToHtml(text) {
 }
 
 // ============================================
-// 注册 ComfyUI 扩展（同时支持文本和图像流式节点）
+// 注册 ComfyUI 扩展
 // ============================================
 app.registerExtension({
     name: "LLM.StreamUI.Pro",
@@ -126,7 +125,6 @@ app.registerExtension({
             const result = origOnNodeCreated?.apply(this, arguments);
 
             if (!this.streamContainer) {
-                // 创建输出容器
                 const div = document.createElement("div");
                 Object.assign(div.style, {
                     width: "100%",
@@ -144,7 +142,6 @@ app.registerExtension({
                     boxSizing: "border-box"
                 });
 
-                // 全局注入深色主题样式（仅注入一次）
                 if (!document.getElementById('llm-stream-ui-pro-styles')) {
                     const style = document.createElement('style');
                     style.id = 'llm-stream-ui-pro-styles';
@@ -216,8 +213,8 @@ app.registerExtension({
                 this.addDOMWidget("stream_output", "custom", div, { serialize: false });
                 this.streamContainer = div;
                 this.fullText = "";
+                this.renderPending = false; // 修复 #9
 
-                // 设置节点最小高度
                 if (this.size[1] < 300) this.setSize([this.size[0], 300]);
             }
             return result;
@@ -225,35 +222,61 @@ app.registerExtension({
     },
 
     setup() {
-        // 监听后端推送的流式事件（已清理空格）
-        app.api.addEventListener("llm_stream_update", (event) => {
-            const { node_id, delta } = event.detail || {};
-            if (!node_id || !delta) return;
+        // 修复 #9：使用 requestAnimationFrame 节流
+        let renderScheduled = false;
+        let pendingNodeId = null;
+        let pendingHtml = null;
 
-            // 使用 ComfyUI 标准 API 查找节点
-            const node = app.graph.getNodeById(node_id);
+        function scheduleRender(nodeId, html) {
+            if (renderScheduled) return;
+            renderScheduled = true;
+            requestAnimationFrame(() => {
+                renderScheduled = false;
+                const node = app.graph.getNodeById(Number(nodeId));
+                if (node && node.streamContainer) {
+                    node.streamContainer.innerHTML = html;
+                    node.streamContainer.scrollTop = node.streamContainer.scrollHeight;
+                }
+            });
+        }
+
+        app.api.addEventListener("llm_stream_update", (event) => {
+            const { node_id, delta, reset } = event.detail || {};
+            if (!node_id) return;
+
+            // 修复 #10：转换为数字
+            const node = app.graph.getNodeById(Number(node_id));
             if (!node || !node.streamContainer) {
                 console.warn(`[LLM.StreamUI.Pro] 未找到节点 ${node_id} 或其容器`);
                 return;
             }
 
+            // 修复 #1：处理重置信号
+            if (reset) {
+                node.fullText = "";
+                node.streamContainer.innerText = "等待输出...";
+                return;
+            }
+
+            if (!delta) return;
+
             if (node.fullText === undefined) node.fullText = "";
             node.fullText += delta;
 
             const el = node.streamContainer;
-            // 清除初始占位符
             if (el.innerText === "等待输出..." && node.fullText === delta) {
                 el.innerText = "";
             }
 
             try {
-                // 渲染 Markdown 并自动滚动
-                el.innerHTML = markdownToHtml(node.fullText);
-                el.scrollTop = el.scrollHeight;
+                const html = markdownToHtml(node.fullText);
+                // 修复 #9：使用 RAF 节流渲染
+                scheduleRender(Number(node_id), html);
+                // 只在结束时 setDirtyCanvas（简化：每次 delta 后置 dirty）
                 app.graph.setDirtyCanvas(true, false);
             } catch (err) {
                 console.error("[LLM.StreamUI.Pro] 渲染错误:", err);
-                el.innerText = node.fullText; // 降级显示纯文本
+                el.innerText = node.fullText;
             }
         });
     }

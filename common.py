@@ -1,6 +1,6 @@
-# common.py (20260423)
 import base64
 from io import BytesIO
+
 from PIL import Image
 import numpy as np
 import requests
@@ -9,34 +9,42 @@ from urllib3.util.retry import Retry
 import atexit
 import sys
 import os
+import re
 import json
-import threading
+import codecs
+import folder_paths
 
-# === 强制设置 Windows 控制台为 UTF-8 ===
+# === 强制 Windows 控制台为 UTF-8 ===
 if sys.platform == "win32":
     try:
         import ctypes
         ctypes.windll.kernel32.SetConsoleOutputCP(65001)
         ctypes.windll.kernel32.SetConsoleCP(65001)
-    except:
+    except Exception:
         pass
 
-# ------------------- 线程安全全局 Session 管理 -------------------
-# 每个线程独立一个 session 字典，避免 requests.Session 非线程安全导致崩溃
-_local = threading.local()
-_all_thread_sessions = []  # 用于清理时遍历所有线程的 session
-_lock = threading.Lock()
+# 确保 stdout/stderr 可输出任意 Unicode。
+try:
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+# ------------------- 全局 Session 管理 -------------------
+_session_cache = {}
+
+def _session_key(base_url):
+    """以 scheme://host:port 作为缓存键"""
+    m = re.match(r"^(https?://[^/]+)", (base_url or "").strip())
+    if m:
+        return m.group(1).lower()
+    return (base_url or "").strip().rstrip("/")
 
 def get_session(base_url, timeout=30):
-    """获取当前线程的带重试机制的 requests Session（线程安全）"""
-    # 初始化当前线程的 session 字典
-    if not hasattr(_local, 'sessions'):
-        _local.sessions = {}
-        with _lock:
-            _all_thread_sessions.append(_local.sessions)
-
-    sessions = _local.sessions
-    if base_url not in sessions:
+    key = _session_key(base_url)
+    if key not in _session_cache:
         session = requests.Session()
         retry = Retry(
             total=2,
@@ -46,20 +54,16 @@ def get_session(base_url, timeout=30):
         adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=10)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
-        sessions[base_url] = session
-    return sessions[base_url]
+        _session_cache[key] = session
+    return _session_cache[key]
 
 def clear_sessions():
-    """程序退出时关闭所有线程的所有 session"""
-    with _lock:
-        for sessions in _all_thread_sessions:
-            for url, session in list(sessions.items()):
-                try:
-                    session.close()
-                except:
-                    pass
-            sessions.clear()
-        _all_thread_sessions.clear()
+    for key, session in list(_session_cache.items()):
+        try:
+            session.close()
+        except Exception:
+            pass
+    _session_cache.clear()
 
 atexit.register(clear_sessions)
 
@@ -73,35 +77,51 @@ FRIENDLY_ERRORS = {
 }
 
 def friendly_error(original_exception, context=""):
-    """将技术异常转换为用户友好的错误消息"""
     e = original_exception
     if isinstance(e, requests.exceptions.ConnectionError):
         return FRIENDLY_ERRORS["ConnectionError"]
     elif isinstance(e, requests.exceptions.Timeout):
         return FRIENDLY_ERRORS["Timeout"]
-    elif isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
+    elif isinstance(e, requests.exceptions.HTTPError) and e.response is not None and e.response.status_code == 404:
         return f"API 端点不存在，请检查地址格式是否正确。当前地址: {context}"
     elif "model" in str(e).lower() and "not found" in str(e).lower():
         return FRIENDLY_ERRORS["model_not_found"]
     else:
         return f"请求失败: {e}"
 
-# ------------------- 图像编码 -------------------
-def encode_image(image_tensor, format="PNG"):
-    """将 ComfyUI 图像 tensor 编码为 base64"""
-    i = 255. * image_tensor[0].cpu().numpy()
+# ------------------- 图像编码（支持最大边长缩放） -------------------
+def encode_image(image_tensor, format="PNG", max_side=None):
+    if image_tensor is None:
+        return ""
+    try:
+        i = 255. * image_tensor[0].cpu().numpy()
+    except (IndexError, AttributeError):
+        return ""
     img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+
+    if max_side and max_side > 0:
+        w, h = img.size
+        long_edge = max(w, h)
+        if long_edge > max_side:
+            scale = max_side / float(long_edge)
+            new_w = max(1, int(round(w * scale)))
+            new_h = max(1, int(round(h * scale)))
+            img = img.resize((new_w, new_h), resample=Image.BICUBIC)
+            print(f"[LLM External] 图片已缩放至 {new_w}x{new_h} (最大边长 {max_side})")
+
     if format.upper() == "JPEG" and img.mode == "RGBA":
         img = img.convert("RGB")
+
     buffered = BytesIO()
     img.save(buffered, format=format.upper())
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 # ------------------- 响应提取 -------------------
 def extract_response(message):
-    """从消息中提取内容，支持 reasoning_content 降级"""
-    content = message.get("content", "").strip()
-    reasoning = message.get("reasoning_content", "").strip()
+    if not isinstance(message, dict):
+        return "", "模型返回的消息格式异常。"
+    content = (message.get("content") or "").strip()
+    reasoning = (message.get("reasoning_content") or "").strip()
     if content:
         return content, None
     elif reasoning:
@@ -111,7 +131,6 @@ def extract_response(message):
 
 # ------------------- URL 规范化 -------------------
 def normalize_api_url(url):
-    """确保 API URL 以 /v1 结尾"""
     if not url or not isinstance(url, str):
         return ""
     url = url.strip().rstrip("/")
@@ -122,84 +141,193 @@ def normalize_api_url(url):
     return url
 
 def get_actual_model_name(port):
-    """查询端口上实际运行的模型名称"""
     try:
         resp = requests.get(f"http://127.0.0.1:{port}/v1/models", timeout=2)
         if resp.status_code == 200:
             models = resp.json().get("data", [])
             if models:
                 return models[0]["id"]
-    except:
+    except Exception:
         pass
     return None
 
+# ------------------- LLM 模型文件扫描（支持不区分大小写 & 递归子文件夹） -------------------
+def get_llm_folder():
+    """
+    获取 ComfyUI 的 LLM 模型文件夹路径，支持大小写不敏感（优先 LLM，其次 llm）。
+    如果找到，会将其注册到 folder_paths 中（键名为 "LLM"），以便后续使用。
+    """
+    try:
+        # 尝试标准大写 LLM
+        llm_dir = os.path.join(folder_paths.models_dir, "LLM")
+        if os.path.isdir(llm_dir):
+            if "LLM" not in folder_paths.folder_names_and_paths:
+                folder_paths.folder_names_and_paths["LLM"] = ([llm_dir], set())
+            return llm_dir
+
+        # 尝试小写 llm
+        llm_dir_lower = os.path.join(folder_paths.models_dir, "llm")
+        if os.path.isdir(llm_dir_lower):
+            # 注册为 "LLM" 以便统一使用
+            if "LLM" not in folder_paths.folder_names_and_paths:
+                folder_paths.folder_names_and_paths["LLM"] = ([llm_dir_lower], set())
+            else:
+                # 如果已存在但路径不同，追加
+                paths, exts = folder_paths.folder_names_and_paths["LLM"]
+                if llm_dir_lower not in paths:
+                    paths.append(llm_dir_lower)
+            return llm_dir_lower
+
+        return None
+    except Exception:
+        return None
+
+def _scan_gguf_files(folder, include_mmproj=False):
+    """
+    递归扫描 folder 下的所有 .gguf 文件，返回相对路径列表。
+    include_mmproj: True 返回 mmproj 文件，False 返回非 mmproj 文件。
+    """
+    if not folder or not os.path.isdir(folder):
+        return []
+    results = []
+    for root, dirs, files in os.walk(folder):
+        for f in files:
+            if not f.endswith('.gguf'):
+                continue
+            lower = f.lower()
+            is_mmproj = 'mmproj' in lower
+            if include_mmproj == is_mmproj:
+                rel = os.path.relpath(os.path.join(root, f), folder)
+                # 使用正斜杠统一路径分隔符（Windows 兼容）
+                rel = rel.replace('\\', '/')
+                results.append(rel)
+    return sorted(results)
+
+def get_gguf_files():
+    """返回 LLM 文件夹（包括所有子目录）中的非 mmproj .gguf 文件（相对路径）"""
+    folder = get_llm_folder()
+    return _scan_gguf_files(folder, include_mmproj=False)
+
+def get_mmproj_files():
+    """返回 LLM 文件夹（包括所有子目录）中的 mmproj .gguf 文件（相对路径）"""
+    folder = get_llm_folder()
+    return _scan_gguf_files(folder, include_mmproj=True)
+
+def parse_kv_cache_type(value):
+    if value == "q8_0":
+        return "q8_0"
+    return "f16"
+
 # ------------------- 统一思考模式注入 -------------------
-def apply_thinking_mode(payload: dict, model_name: str, thinking_mode: str):
-    """根据模型名称和选择，向 payload 中注入对应的思考模式参数"""
-    if thinking_mode == "跟随模型默认":
-        return
-    model_lower = model_name.lower()
-    force_on = (thinking_mode == "强制开启思考")
-    if "deepseek" in model_lower:
-        payload["chat_template_kwargs"] = {"thinking": force_on}
-    elif "glm" in model_lower:
-        payload["thinking"] = {"type": "enabled" if force_on else "disabled"}
-    elif "qwen" in model_lower or "qwq" in model_lower:
-        payload["enable_thinking"] = force_on
+def apply_thinking_mode(payload: dict, model_name: str, thinking_mode: str, reasoning_effort: str = None):
+    model_lower = (model_name or "").lower()
+
+    if thinking_mode in ("强制开启思考", "强制关闭思考"):
+        force_on = (thinking_mode == "强制开启思考")
+        if "deepseek" in model_lower:
+            payload["chat_template_kwargs"] = {"thinking": force_on}
+        elif "glm" in model_lower:
+            payload["thinking"] = {"type": "enabled" if force_on else "disabled"}
+        elif "qwen" in model_lower or "qwq" in model_lower:
+            payload["enable_thinking"] = force_on
+
+    if reasoning_effort and reasoning_effort != "无" and ("qwen" in model_lower or "qwq" in model_lower):
+        payload["reasoning_effort"] = reasoning_effort
 
 # ------------------- 统一非流式请求执行 -------------------
 def execute_non_stream_chat(api_url, payload, timeout):
-    """
-    执行非流式 Chat Completion 请求。
-    返回: (result_text: str, is_success: bool)
-    """
     try:
         session = get_session(api_url)
         resp = session.post(f"{api_url}/chat/completions", json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
-        if not data.get("choices") or len(data["choices"]) == 0:
+
+        if not isinstance(data, dict):
+            return "错误：API 响应格式异常", False
+
+        err = data.get("error")
+        if err:
+            msg = err.get("message", err) if isinstance(err, dict) else err
+            return f"错误：服务端返回错误：{msg}", False
+
+        choices = data.get("choices") or []
+        if not choices:
             return "错误：API 返回空的choices列表", False
-        msg = data["choices"][0].get("message")
+
+        msg = choices[0].get("message")
         if not msg:
             return "错误：API 返回的message字段为空", False
+
         text, warn = extract_response(msg)
         if warn:
-            return f"[注意] {warn}\n\n{text}" if text else f"[注意] {warn}", False
+            return (f"[注意] {warn}\n\n{text}" if text else f"[注意] {warn}"), False
         return text, True
+
     except (requests.exceptions.RequestException, ValueError) as e:
         return friendly_error(e, context=api_url), False
 
 # ------------------- 流式请求辅助 -------------------
-def stream_chat_completion(api_url, payload, timeout):
-    """生成器：流式获取 chat completion 响应，同时支持 content 和 reasoning_content"""
+def iter_chat_stream(api_url, payload, timeout):
     session = get_session(api_url)
+
+    def _parse_data(data):
+        try:
+            obj = json.loads(data)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(obj, dict):
+            return None
+        err = obj.get("error")
+        if err:
+            msg = err.get("message", err) if isinstance(err, dict) else str(err)
+            raise RuntimeError(f"服务端在流中返回错误：{msg}")
+        try:
+            choices = obj.get("choices") or []
+            delta = (choices[0] or {}).get("delta") or {}
+            return delta.get("content") or delta.get("reasoning_content") or None
+        except (AttributeError, IndexError, KeyError, TypeError):
+            return None
+
     with session.post(
         f"{api_url}/chat/completions", json=payload, timeout=timeout, stream=True
     ) as resp:
         resp.raise_for_status()
+
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         buffer = ""
+        done = False
+
         for chunk in resp.iter_content(chunk_size=8192):
             if not chunk:
                 continue
-            buffer += chunk.decode("utf-8", errors="ignore")
-            
+            buffer += decoder.decode(chunk)
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
+                line = line.rstrip("\r")
                 if not line.startswith("data:"):
                     continue
-                
-                data = line[5:].strip() if line.startswith("data: ") else line[5:].strip()
-                if data == "[DONE]":
-                    return
-                
-                try:
-                    if not data:
-                        continue
-                    chunk = json.loads(data)
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    content = delta.get("content") or delta.get("reasoning_content")
-                    if content:
-                        yield content
-                except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                data = line[5:].strip()
+                if not data:
                     continue
+                if data == "[DONE]":
+                    done = True
+                    break
+                token = _parse_data(data)
+                if token:
+                    yield token
+            if done:
+                break
+
+        buffer += decoder.decode(b"", final=True)
+
+        if not done and buffer:
+            line = buffer.rstrip("\r")
+            if line.startswith("data:"):
+                data = line[5:].strip()
+                if data and data != "[DONE]":
+                    token = _parse_data(data)
+                    if token:
+                        yield token
+
+def stream_chat_completion(api_url, payload, timeout):
+    yield from iter_chat_stream(api_url, payload, timeout)

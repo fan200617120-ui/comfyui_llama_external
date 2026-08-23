@@ -8,6 +8,7 @@ from .common import (
     apply_thinking_mode,
     execute_non_stream_chat
 )
+from .server_manager import unload_by_api_url
 
 class LLMAgentPlanner:
     """ Agent 任务规划器：将自然语言需求拆解为结构化工作流步骤。 """
@@ -25,7 +26,15 @@ class LLMAgentPlanner:
                 "max_tokens": ("INT", {"default": 1024, "min": 256, "max": 4096}),
                 "thinking_mode": (["跟随模型默认", "强制关闭思考", "强制开启思考"], {
                     "default": "跟随模型默认",
-                    "tooltip": "控制模型的思考模式。对于不支持思考控制的模型，请选择「跟随模型默认」。"
+                    "tooltip": "控制模型的思考模式。"
+                }),
+                "reasoning_effort": (["无", "low", "medium", "high", "xhigh"], {
+                    "default": "无",
+                    "tooltip": "推理强度（仅 Qwen3.8 等模型支持）"
+                }),
+                "auto_unload": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "生成后自动卸载该模型（杀死对应端口进程）"
                 }),
             }
         }
@@ -35,7 +44,7 @@ class LLMAgentPlanner:
     FUNCTION = "plan"
     CATEGORY = "LLM_External"
 
-    def plan(self, api_url, model_name, user_request, system_instruction, temperature, timeout, max_tokens, thinking_mode):
+    def plan(self, api_url, model_name, user_request, system_instruction, temperature, timeout, max_tokens, thinking_mode, reasoning_effort="无", auto_unload=False):
         api_url = normalize_api_url(api_url)
         if api_url.startswith("ERROR") or api_url.startswith("错误"):
             return (api_url, "")
@@ -51,19 +60,26 @@ class LLMAgentPlanner:
             "stream": False
         }
 
-        apply_thinking_mode(payload, model_name, thinking_mode)
+        effort = reasoning_effort if reasoning_effort != "无" else None
+        apply_thinking_mode(payload, model_name, thinking_mode, reasoning_effort=effort)
 
         try:
             content, is_success = execute_non_stream_chat(api_url, payload, timeout)
+            
+            if auto_unload:
+                msg, err = unload_by_api_url(api_url)
+                if err:
+                    print(f"[LLMAgentPlanner] 卸载失败: {err}")
+                else:
+                    print(f"[LLMAgentPlanner] {msg}")
+
             if not is_success:
                 return ("[]", content)
 
-            # 稳健的 JSON 数组提取
             parsed_list, raw_text = self._extract_json_array(content)
             if parsed_list is not None:
                 return (json.dumps(parsed_list, ensure_ascii=False), raw_text)
 
-            # 降级：尝试解析单个对象
             try:
                 parsed = json.loads(content)
                 if isinstance(parsed, (dict, list)):
@@ -82,10 +98,8 @@ class LLMAgentPlanner:
     @staticmethod
     def _extract_json_array(content: str):
         """提取最外层的 JSON 数组，支持 Markdown 代码块包裹"""
-        # 1. 清理 Markdown 代码块
         cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip(), flags=re.MULTILINE)
 
-        # 2. 尝试直接解析
         try:
             parsed = json.loads(cleaned)
             if isinstance(parsed, list):
@@ -93,7 +107,6 @@ class LLMAgentPlanner:
         except json.JSONDecodeError:
             pass
 
-        # 3. 降级：使用正则提取最外层数组（支持嵌套）
         stack = 0
         start = -1
         for i, char in enumerate(cleaned):
